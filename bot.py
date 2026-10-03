@@ -52,7 +52,7 @@ def verificar_estado_usuario(user_id):
 
     descargas, vip_hasta_str = res
 
-    # Comprobar estado VIP
+    # Comprobar VIP
     if vip_hasta_str:
         try:
             vip_hasta = datetime.strptime(vip_hasta_str, "%Y-%m-%d %H:%M:%S")
@@ -91,7 +91,7 @@ def esta_suscrito(user_id):
     except Exception:
         return True
 
-# --- MOTORES DE DESCARGA ---
+# --- FUNCIONES DE DESCARGA ---
 
 def descargar_tiktok_api(url):
     try:
@@ -121,15 +121,18 @@ def descargar_tiktok_api(url):
         print(f"Error TikTok API: {e}")
     return None
 
-def descargar_instagram_api(url):
+def descargar_api_universal(url):
+    """Descarga de forma directa Instagram y YouTube sin requerir ffmpeg ni credenciales."""
     try:
-        # API intermediaria que no exige cookies de Instagram
         api_endpoint = "https://api.cobalt.tools"
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json"
         }
-        payload = {"url": url}
+        payload = {
+            "url": url,
+            "videoQuality": "720"
+        }
         res = requests.post(api_endpoint, json=payload, headers=headers, timeout=20)
         
         if res.status_code == 200:
@@ -137,8 +140,8 @@ def descargar_instagram_api(url):
             video_url = data.get("url")
             if video_url:
                 os.makedirs("descargas", exist_ok=True)
-                file_path = f"descargas/insta_{os.urandom(4).hex()}.mp4"
-                with requests.get(video_url, stream=True, timeout=45) as r:
+                file_path = f"descargas/vid_{os.urandom(4).hex()}.mp4"
+                with requests.get(video_url, stream=True, timeout=60) as r:
                     r.raise_for_status()
                     with open(file_path, "wb") as f:
                         for chunk in r.iter_content(chunk_size=1024*1024):
@@ -149,12 +152,12 @@ def descargar_instagram_api(url):
                 elif os.path.exists(file_path):
                     os.remove(file_path)
     except Exception as e:
-        print(f"Error Instagram API: {e}")
+        print(f"Error API universal: {e}")
     return None
 
 def descargar_ytdlp(url):
     os.makedirs("descargas", exist_ok=True)
-    # Formato directo sin requerir mezcla con ffmpeg
+    # Formato progresivo único: evita exigir mezclas con ffmpeg
     ydl_opts = {
         'format': 'best[ext=mp4]/best',
         'outtmpl': 'descargas/%(id)s.%(ext)s',
@@ -219,8 +222,8 @@ def recibir_enlace(message):
     user_id = message.from_user.id
     url = message.text.strip()
 
-    # Limpiar parámetros de tracking (?igsh=..., ?stkn=...)
-    if "?" in url and ("instagram.com" in url or "tiktok.com" in url):
+    # Limpiar parámetros de tracking (?si=..., ?igsh=...)
+    if "?" in url and ("instagram.com" in url or "tiktok.com" in url or "youtu.be" in url or "youtube.com/shorts" in url):
         url = url.split("?")[0]
 
     if not esta_suscrito(user_id):
@@ -250,15 +253,15 @@ def recibir_enlace(message):
     archivo = None
 
     try:
-        # 1. Intentar con TikTok API
+        # 1. Probar TikTok primero
         if "tiktok.com" in url:
             archivo = descargar_tiktok_api(url)
             
-        # 2. Intentar con Instagram API
-        elif "instagram.com" in url:
-            archivo = descargar_instagram_api(url)
-            
-        # 3. Para YouTube o respaldo si las APIs fallan
+        # 2. Instagram o YouTube por API directa
+        elif "instagram.com" in url or "youtube.com" in url or "youtu.be" in url:
+            archivo = descargar_api_universal(url)
+
+        # 3. Respaldo general con yt_dlp
         if not archivo or not os.path.exists(archivo):
             archivo = descargar_ytdlp(url)
 
@@ -272,13 +275,12 @@ def recibir_enlace(message):
                     caption="🎬 Video descargado con éxito\n📢 Canal: @torico_cuba_db"
                 )
             
-            # Sumar conteo solo si es usuario gratis
             if tipo_usuario == "free":
                 sumar_descarga(user_id)
 
             bot.delete_message(message.chat.id, msg_espera.message_id)
         else:
-            bot.edit_message_text("❌ No se pudo descargar el video. Verifica que el enlace no sea privado.", chat_id=message.chat.id, message_id=msg_espera.message_id)
+            bot.edit_message_text("❌ No se pudo descargar el video. Verifica que no sea privado ni supere los 50MB.", chat_id=message.chat.id, message_id=msg_espera.message_id)
     except Exception as e:
         bot.edit_message_text(f"❌ Error al procesar: {e}", chat_id=message.chat.id, message_id=msg_espera.message_id)
     finally:
