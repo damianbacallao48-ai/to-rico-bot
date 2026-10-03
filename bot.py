@@ -99,7 +99,7 @@ def esta_suscrito(user_id):
 # MOTORES DE DESCARGA
 # ==========================================
 
-# 1. TIKTOK (INTACTO - 100% FUNCIONAL)
+# 1. TIKTOK (INTACTO - NO TOCAR)
 def descargar_tiktok(url):
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -125,9 +125,8 @@ def descargar_tiktok(url):
         print(f"Error TikTok: {e}")
     return None
 
-# 2. INSTAGRAM (Extractor Embed directo de Meta sin bloqueo de IP)
+# 2. INSTAGRAM (Vía pasarela de metadatos abiertos / CDN directo sin cookies)
 def descargar_instagram(url):
-    # Extraer el ID corto del reel o post
     match = re.search(r'/(?:reel|p|tv)/([a-zA-Z0-9_-]+)', url)
     if not match:
         return None
@@ -135,39 +134,33 @@ def descargar_instagram(url):
 
     video_url = None
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://www.instagram.com/"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     }
 
-    # Método 1: Extracción por página Embed oficial (Meta nunca bloquea esta ruta)
+    # Método 1: Gateway de instagramez (entrega video directo en CDN)
     try:
-        embed_url = f"https://www.instagram.com/p/{shortcode}/embed/captioned/"
-        res = requests.get(embed_url, headers=headers, timeout=10)
-        if res.status_code == 200:
-            # Buscar el enlace directo de video en el HTML del reproductor embed
-            match_v = re.search(r'class="EmbeddedMediaVideo"[^>]*src="([^"]+)"', res.text)
-            if not match_v:
-                match_v = re.search(r'"video_url":"([^"]+)"', res.text)
-            if match_v:
-                video_url = match_v.group(1).replace("\\u0026", "&").replace("&amp;", "&")
-    except Exception as e:
-        print(f"Error Embed IG: {e}")
+        ez_url = f"https://instagramez.com/reel/{shortcode}/"
+        res = requests.get(ez_url, headers={"User-Agent": "TelegramBot (like TwitterBot)"}, timeout=10)
+        m = re.search(r'<meta property="og:video" content="([^"]+)"', res.text)
+        if not m:
+            m = re.search(r'<meta property="og:video:secure_url" content="([^"]+)"', res.text)
+        if m:
+            video_url = m.group(1).replace("&amp;", "&")
+    except Exception:
+        pass
 
-    # Método 2: Respaldo vía gateway de visualización libre
+    # Método 2: Gateway de vkr/snapcdn
     if not video_url:
         try:
-            r_alt = requests.get(f"https://api.ryzendesu.vip/api/downloader/igdl?url=https://www.instagram.com/reel/{shortcode}/", headers=headers, timeout=10).json()
-            if isinstance(r_alt, list) and len(r_alt) > 0:
-                video_url = r_alt[0].get("url")
-            elif isinstance(r_alt, dict):
-                items = r_alt.get("data", [])
-                if items:
-                    video_url = items[0].get("url")
-        except Exception as e:
-            print(f"Error Proxy IG: {e}")
+            r_vkr = requests.get(f"https://api.vkrdownloader.com/v1/get?url=https://www.instagram.com/reel/{shortcode}/", timeout=10).json()
+            downloads = r_vkr.get("data", {}).get("downloads", [])
+            for item in downloads:
+                if "video" in str(item.get("format", "")).lower() or item.get("format_id") in ["mp4", "video"]:
+                    video_url = item.get("url")
+                    break
+        except Exception:
+            pass
 
-    # Descarga directa del archivo si se obtuvo el stream
     if video_url:
         try:
             os.makedirs("descargas", exist_ok=True)
@@ -187,7 +180,7 @@ def descargar_instagram(url):
 
     return None
 
-# 3. YOUTUBE (INTACTO - 100% FUNCIONAL)
+# 3. YOUTUBE (INTACTO - NO TOCAR)
 def descargar_youtube(url):
     try:
         r = requests.post(
@@ -321,7 +314,6 @@ def recibir_enlace(message):
     archivo = None
 
     try:
-        # Enrutamiento estricto
         if "tiktok.com" in raw_text:
             archivo = descargar_tiktok(raw_text.split("?")[0])
         elif "instagram.com" in raw_text or "instagr.am" in raw_text:
