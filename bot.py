@@ -2,7 +2,6 @@ import os
 import re
 import sqlite3
 import threading
-import traceback
 from datetime import datetime, timedelta
 import requests
 import yt_dlp
@@ -126,92 +125,77 @@ def descargar_tiktok(url):
         print(f"Error TikTok: {e}")
     return None
 
-# 2. INSTAGRAM (CON REPORTE EXACTO DE ERRORES)
-def descargar_instagram_con_diagnostico(url):
+# 2. INSTAGRAM (Instancias comunitarias abiertas sin JWT + CDN scraping)
+def descargar_instagram(url):
     match = re.search(r'/(?:reel|p|tv)/([a-zA-Z0-9_-]+)', url)
     if not match:
-        return None, "No se encontró un código de Reel/Post válido en la URL."
+        return None
     shortcode = match.group(1)
     clean_url = f"https://www.instagram.com/reel/{shortcode}/"
 
-    errores = []
-    os.makedirs("descargas", exist_ok=True)
+    video_url = None
+    headers_nav = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-    # Prueba A: yt-dlp con headers móviles nativos
-    out_pattern = f"descargas/ig_{os.urandom(4).hex()}.%(ext)s"
-    ydl_opts = {
-        'format': 'best[ext=mp4]/best',
-        'outtmpl': out_pattern,
-        'quiet': True,
-        'no_warnings': True,
-        'max_filesize': 48 * 1024 * 1024,
-        'socket_timeout': 15,
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 13; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36 Instagram 302.0.0.34.111',
-            'X-IG-App-ID': '936619743392459'
-        }
-    }
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(clean_url, download=True)
-            filename = ydl.prepare_filename(info)
-            base, _ = os.path.splitext(filename)
-            mp4_name = base + ".mp4"
-            if os.path.exists(mp4_name):
-                return mp4_name, "Éxito con yt-dlp"
-            if os.path.exists(filename):
-                return filename, "Éxito con yt-dlp"
-    except Exception as e:
-        msg = str(e).split("\n")[0]
-        errores.append(f"yt-dlp: {msg[:100]}")
+    # Vía 1: Instancias libres comunitarias de Cobalt (sin bloqueo de JWT)
+    instancias_cobalt = [
+        "https://cobalt-api.kwiatekm.tokyo",
+        "https://api.cobalt.030613.xyz",
+        "https://cobalt.xy2401.top"
+    ]
+    for inst in instancias_cobalt:
+        try:
+            r_cob = requests.post(
+                inst,
+                json={"url": clean_url, "videoQuality": "720"},
+                headers={"Accept": "application/json", "Content-Type": "application/json"},
+                timeout=8
+            )
+            if r_cob.status_code == 200:
+                data = r_cob.json()
+                video_url = data.get("url")
+                if video_url:
+                    break
+        except Exception:
+            continue
 
-    # Prueba B: Cobalt API directa
-    try:
-        payload = {"url": clean_url}
-        h_cobalt = {"Accept": "application/json", "Content-Type": "application/json"}
-        r = requests.post("https://api.cobalt.tools", json=payload, headers=h_cobalt, timeout=10)
-        if r.status_code == 200:
-            v_url = r.json().get("url")
-            if v_url:
-                file_path = f"descargas/ig_{os.urandom(4).hex()}.mp4"
-                with requests.get(v_url, stream=True, timeout=40) as req:
-                    req.raise_for_status()
-                    with open(file_path, "wb") as f:
-                        for chunk in req.iter_content(chunk_size=1024*1024):
-                            if chunk:
-                                f.write(chunk)
-                if os.path.exists(file_path) and os.path.getsize(file_path) > 100 * 1024:
-                    return file_path, "Éxito con Cobalt"
-        else:
-            errores.append(f"Cobalt: HTTP {r.status_code} - {r.text[:80]}")
-    except Exception as e:
-        errores.append(f"Cobalt: {str(e)[:80]}")
+    # Vía 2: API directa de extracción de media pública
+    if not video_url:
+        try:
+            r_api = requests.get(f"https://api.agatz.xyz/api/instagram?url={clean_url}", timeout=10).json()
+            if r_api.get("status") == 200:
+                data = r_api.get("data", [])
+                if isinstance(data, list) and len(data) > 0:
+                    video_url = data[0].get("url")
+        except Exception:
+            pass
 
-    # Prueba C: API FastDL / SnapInsta
-    try:
-        r2 = requests.get(f"https://delirius-apiofc.vercel.app/download/instagram?url={clean_url}", timeout=10)
-        if r2.status_code == 200:
-            res_json = r2.json()
-            data = res_json.get("data", [])
-            target = None
-            if isinstance(data, list) and len(data) > 0:
-                target = data[0].get("url")
-            if target:
-                file_path = f"descargas/ig_{os.urandom(4).hex()}.mp4"
-                with requests.get(target, stream=True, timeout=40) as req:
-                    req.raise_for_status()
-                    with open(file_path, "wb") as f:
-                        for chunk in req.iter_content(chunk_size=1024*1024):
-                            if chunk:
-                                f.write(chunk)
-                if os.path.exists(file_path) and os.path.getsize(file_path) > 100 * 1024:
-                    return file_path, "Éxito con API Externa"
-        else:
-            errores.append(f"API Externa: HTTP {r2.status_code}")
-    except Exception as e:
-        errores.append(f"API Externa: {str(e)[:80]}")
+    # Vía 3: DDInstagram API endpoint JSON
+    if not video_url:
+        try:
+            r_dd = requests.get(f"https://api.ddinstagram.com/reel/{shortcode}/", timeout=10).json()
+            if r_dd.get("video_url"):
+                video_url = r_dd.get("video_url")
+        except Exception:
+            pass
 
-    return None, "\n• " + "\n• ".join(errores)
+    if video_url:
+        try:
+            os.makedirs("descargas", exist_ok=True)
+            file_path = f"descargas/ig_{os.urandom(4).hex()}.mp4"
+            with requests.get(video_url, headers=headers_nav, stream=True, timeout=50) as req:
+                req.raise_for_status()
+                with open(file_path, "wb") as f:
+                    for chunk in req.iter_content(chunk_size=1024*1024):
+                        if chunk:
+                            f.write(chunk)
+            if os.path.exists(file_path) and os.path.getsize(file_path) > 100 * 1024:
+                return file_path
+            elif os.path.exists(file_path):
+                os.remove(file_path)
+        except Exception as e:
+            print(f"Error descargando binario IG: {e}")
+
+    return None
 
 # 3. YOUTUBE (INTACTO - NO TOCAR)
 def descargar_youtube(url):
@@ -345,13 +329,12 @@ def recibir_enlace(message):
     msg_espera = bot.reply_to(message, "⏳ *Descargando video...*", parse_mode="Markdown")
     os.makedirs("descargas", exist_ok=True)
     archivo = None
-    diagnostico_ig = ""
 
     try:
         if "tiktok.com" in raw_text:
             archivo = descargar_tiktok(raw_text.split("?")[0])
         elif "instagram.com" in raw_text or "instagr.am" in raw_text:
-            archivo, diagnostico_ig = descargar_instagram_con_diagnostico(raw_text)
+            archivo = descargar_instagram(raw_text)
         elif "youtube.com" in raw_text or "youtu.be" in raw_text:
             archivo = descargar_youtube(raw_text)
 
@@ -378,18 +361,11 @@ def recibir_enlace(message):
 
             bot.delete_message(message.chat.id, msg_espera.message_id)
         else:
-            if "instagram.com" in raw_text or "instagr.am" in raw_text:
-                bot.edit_message_text(
-                    f"🔍 *Diagnóstico de Instagram:*\n{diagnostico_ig}",
-                    chat_id=message.chat.id,
-                    message_id=msg_espera.message_id
-                )
-            else:
-                bot.edit_message_text(
-                    "❌ No se pudo descargar este enlace. Asegúrate de que el contenido no sea privado ni supere los 50MB.",
-                    chat_id=message.chat.id,
-                    message_id=msg_espera.message_id
-                )
+            bot.edit_message_text(
+                "❌ No se pudo descargar este enlace. Asegúrate de que el contenido no sea privado ni supere los 50MB.",
+                chat_id=message.chat.id,
+                message_id=msg_espera.message_id
+            )
     except Exception as e:
         bot.edit_message_text(f"❌ Error al procesar: {e}", chat_id=message.chat.id, message_id=msg_espera.message_id)
     finally:
