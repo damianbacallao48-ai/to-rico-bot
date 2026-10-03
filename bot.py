@@ -106,18 +106,19 @@ def sanitizar_enlace(texto):
     
     url = url_match.group(1).strip()
     
-    # Extraer ID puro de Instagram
+    # Instagram: extraer solo el código limpio
     ig_match = re.search(r'(?:instagram\.com|instagr\.am)/(?:reel|p|tv)/([a-zA-Z0-9_-]+)', url)
     if ig_match:
         clean_url = f"https://www.instagram.com/reel/{ig_match.group(1)}/"
         return "instagram", clean_url
 
-    # Normalizar YouTube / Shorts
+    # YouTube: extraer ID limpio de 11 caracteres
     yt_match = re.search(r'(?:youtube\.com/shorts/|youtu\.be/|youtube\.com/watch\?v=)([a-zA-Z0-9_-]{11})', url)
     if yt_match:
         clean_url = f"https://www.youtube.com/watch?v={yt_match.group(1)}"
         return "youtube", clean_url
 
+    # TikTok: quitar parámetros
     if "tiktok.com" in url:
         clean_url = url.split("?")[0]
         return "tiktok", clean_url
@@ -154,74 +155,30 @@ def descargar_tiktok(url):
         print(f"Error TikTok: {e}")
     return None
 
-# 2. INSTAGRAM (Scraping directo de CDN sin pasar por el bloqueo de yt-dlp)
+# 2. INSTAGRAM (Restaurado a yt-dlp directo sin requerir ffmpeg ni APIs externas caídas)
 def descargar_instagram(url):
-    video_url = None
-    headers_nav = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "*/*"
+    os.makedirs("descargas", exist_ok=True)
+    out_pattern = f"descargas/ig_{os.urandom(4).hex()}.%(ext)s"
+    ydl_opts = {
+        'format': 'best[ext=mp4]/best',
+        'outtmpl': out_pattern,
+        'quiet': True,
+        'no_warnings': True,
+        'max_filesize': 48 * 1024 * 1024,
+        'socket_timeout': 30
     }
-
-    # Método 1: Proxy de metadatos abiertos FastDL
     try:
-        r_api = requests.post(
-            "https://api.fastdl.app/api/convert",
-            json={"url": url},
-            headers={"User-Agent": headers_nav["User-Agent"], "Content-Type": "application/json"},
-            timeout=10
-        )
-        if r_api.status_code == 200:
-            res_data = r_api.json()
-            media = res_data.get("url", [])
-            if isinstance(media, list) and len(media) > 0:
-                video_url = media[0].get("url")
-            elif isinstance(media, str):
-                video_url = media
-    except Exception:
-        pass
-
-    # Método 2: Instancia DDInstagram (extrae directamente la etiqueta og:video del CDN)
-    if not video_url:
-        try:
-            dd_link = url.replace("instagram.com", "ddinstagram.com")
-            r_dd = requests.get(dd_link, headers={"User-Agent": "facebookexternalhit/1.1"}, timeout=10)
-            if r_dd.status_code == 200:
-                match = re.search(r'<meta property="og:video" content="([^"]+)"', r_dd.text)
-                if match:
-                    video_url = match.group(1).replace("&amp;", "&")
-        except Exception:
-            pass
-
-    # Método 3: Pasarela Invidious / VKR
-    if not video_url:
-        try:
-            r_vkr = requests.get(f"https://api.vkrdownloader.com/v1/get?url={url}", timeout=10).json()
-            downloads = r_vkr.get("data", {}).get("downloads", [])
-            for item in downloads:
-                if "video" in str(item.get("format", "")).lower() or item.get("format_id") in ["mp4", "video"]:
-                    video_url = item.get("url")
-                    break
-        except Exception:
-            pass
-
-    if video_url:
-        try:
-            os.makedirs("descargas", exist_ok=True)
-            file_path = f"descargas/ig_{os.urandom(4).hex()}.mp4"
-            with requests.get(video_url, headers=headers_nav, stream=True, timeout=50) as req:
-                req.raise_for_status()
-                with open(file_path, "wb") as f:
-                    for chunk in req.iter_content(chunk_size=1024*1024):
-                        if chunk:
-                            f.write(chunk)
-            if os.path.exists(file_path) and os.path.getsize(file_path) > 100 * 1024:
-                return file_path
-            elif os.path.exists(file_path):
-                os.remove(file_path)
-        except Exception as e:
-            print(f"Error descargando binario IG: {e}")
-
-    return None
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
+            base, _ = os.path.splitext(filename)
+            mp4_name = base + ".mp4"
+            if os.path.exists(mp4_name):
+                return mp4_name
+            return filename
+    except Exception as e:
+        print(f"Error yt-dlp Instagram: {e}")
+        return None
 
 # 3. YOUTUBE (INTACTO - NO TOCADO: El que funcionó al 100%)
 def descargar_youtube(url):
