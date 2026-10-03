@@ -52,7 +52,7 @@ def verificar_estado_usuario(user_id):
 
     descargas, vip_hasta_str = res
 
-    # Comprobar si tiene VIP activo
+    # Comprobar estado VIP
     if vip_hasta_str:
         try:
             vip_hasta = datetime.strptime(vip_hasta_str, "%Y-%m-%d %H:%M:%S")
@@ -91,7 +91,7 @@ def esta_suscrito(user_id):
     except Exception:
         return True
 
-# --- FUNCIONES DE DESCARGA ---
+# --- MOTORES DE DESCARGA ---
 
 def descargar_tiktok_api(url):
     try:
@@ -105,6 +105,7 @@ def descargar_tiktok_api(url):
                 video_url = data.get("wmplay")
             
             if video_url:
+                os.makedirs("descargas", exist_ok=True)
                 file_path = f"descargas/vid_{data.get('id', 'temp')}.mp4"
                 with requests.get(video_url, headers=headers, stream=True, timeout=45) as req:
                     req.raise_for_status()
@@ -112,16 +113,17 @@ def descargar_tiktok_api(url):
                         for chunk in req.iter_content(chunk_size=1024*1024):
                             if chunk:
                                 f.write(chunk)
-                if os.path.getsize(file_path) > 800 * 1024:
+                if os.path.exists(file_path) and os.path.getsize(file_path) > 800 * 1024:
                     return file_path
-                else:
+                elif os.path.exists(file_path):
                     os.remove(file_path)
     except Exception as e:
-        print(f"Error en TikTok API: {e}")
+        print(f"Error TikTok API: {e}")
     return None
 
 def descargar_instagram_api(url):
     try:
+        # API intermediaria que no exige cookies de Instagram
         api_endpoint = "https://api.cobalt.tools"
         headers = {
             "Accept": "application/json",
@@ -144,14 +146,17 @@ def descargar_instagram_api(url):
                                 f.write(chunk)
                 if os.path.exists(file_path) and os.path.getsize(file_path) > 100 * 1024:
                     return file_path
+                elif os.path.exists(file_path):
+                    os.remove(file_path)
     except Exception as e:
         print(f"Error Instagram API: {e}")
     return None
 
 def descargar_ytdlp(url):
     os.makedirs("descargas", exist_ok=True)
+    # Formato directo sin requerir mezcla con ffmpeg
     ydl_opts = {
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        'format': 'best[ext=mp4]/best',
         'outtmpl': 'descargas/%(id)s.%(ext)s',
         'quiet': True,
         'no_warnings': True,
@@ -175,8 +180,8 @@ def bienvenida(message):
         "⚡ *¡Bienvenido al Descargador Rápido!*\n\n"
         "Envía el enlace de cualquier video:\n"
         "• TikTok (sin marca de agua)\n"
-        "• Instagram Reels\n"
-        "• YouTube Shorts\n\n"
+        "• Instagram Reels y Videos\n"
+        "• YouTube Shorts y Videos\n\n"
         f"📊 *Tu plan:* {texto_estado}\n"
         f"🆔 *Tu ID:* `{user_id}`\n\n"
         "👉 *Pega el enlace aquí abajo:*"
@@ -214,6 +219,10 @@ def recibir_enlace(message):
     user_id = message.from_user.id
     url = message.text.strip()
 
+    # Limpiar parámetros de tracking (?igsh=..., ?stkn=...)
+    if "?" in url and ("instagram.com" in url or "tiktok.com" in url):
+        url = url.split("?")[0]
+
     if not esta_suscrito(user_id):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("📢 Unirme al Canal", url=CANAL_ENLACE))
@@ -241,11 +250,15 @@ def recibir_enlace(message):
     archivo = None
 
     try:
+        # 1. Intentar con TikTok API
         if "tiktok.com" in url:
             archivo = descargar_tiktok_api(url)
+            
+        # 2. Intentar con Instagram API
         elif "instagram.com" in url:
             archivo = descargar_instagram_api(url)
             
+        # 3. Para YouTube o respaldo si las APIs fallan
         if not archivo or not os.path.exists(archivo):
             archivo = descargar_ytdlp(url)
 
@@ -256,15 +269,16 @@ def recibir_enlace(message):
                     message.chat.id,
                     f,
                     supports_streaming=True,
-                    caption="🎬 Video descargado\n📢 Canal: @torico_cuba_db"
+                    caption="🎬 Video descargado con éxito\n📢 Canal: @torico_cuba_db"
                 )
             
+            # Sumar conteo solo si es usuario gratis
             if tipo_usuario == "free":
                 sumar_descarga(user_id)
 
             bot.delete_message(message.chat.id, msg_espera.message_id)
         else:
-            bot.edit_message_text("❌ No se encontró un archivo de video completo.", chat_id=message.chat.id, message_id=msg_espera.message_id)
+            bot.edit_message_text("❌ No se pudo descargar el video. Verifica que el enlace no sea privado.", chat_id=message.chat.id, message_id=msg_espera.message_id)
     except Exception as e:
         bot.edit_message_text(f"❌ Error al procesar: {e}", chat_id=message.chat.id, message_id=msg_espera.message_id)
     finally:
