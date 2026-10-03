@@ -100,26 +100,22 @@ def esta_suscrito(user_id):
 # ==========================================
 
 def sanitizar_enlace(texto):
-    """Extrae y normaliza el enlace eliminando tokens de rastreo."""
     url_match = re.search(r'(https?://[^\s]+)', texto)
     if not url_match:
         return None, None
     
     url = url_match.group(1).strip()
     
-    # Normalizar Instagram
     ig_match = re.search(r'(?:instagram\.com|instagr\.am)/(?:reel|p|tv)/([a-zA-Z0-9_-]+)', url)
     if ig_match:
         clean_url = f"https://www.instagram.com/reel/{ig_match.group(1)}/"
         return "instagram", clean_url
 
-    # Normalizar YouTube / Shorts
     yt_match = re.search(r'(?:youtube\.com/shorts/|youtu\.be/|youtube\.com/watch\?v=)([a-zA-Z0-9_-]{11})', url)
     if yt_match:
         clean_url = f"https://www.youtube.com/watch?v={yt_match.group(1)}"
         return "youtube", clean_url
 
-    # Normalizar TikTok
     if "tiktok.com" in url:
         clean_url = url.split("?")[0]
         return "tiktok", clean_url
@@ -130,6 +126,7 @@ def sanitizar_enlace(texto):
 # MOTORES DE DESCARGA
 # ==========================================
 
+# 1. TIKTOK (INTACTO)
 def descargar_tiktok(url):
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -155,39 +152,50 @@ def descargar_tiktok(url):
         print(f"Error TikTok: {e}")
     return None
 
+# 2. INSTAGRAM (Ajustado con pasarela multi-API dedicada)
 def descargar_instagram(url):
     video_url = None
     
-    # Método 1: API Cobalt
+    # Pasarela 1: API de SaveIG / FastDl directa
     try:
-        r = requests.post(
-            "https://api.cobalt.tools",
-            json={"url": url},
-            headers={"Accept": "application/json", "Content-Type": "application/json"},
-            timeout=12
-        )
-        if r.status_code == 200:
-            video_url = r.json().get("url")
+        api_post = "https://v3.igdownloader.app/api/ajaxSearch"
+        headers_ig = {
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "X-Requested-With": "XMLHttpRequest"
+        }
+        res = requests.post(api_post, data={"q": url, "t": "media", "lang": "en"}, headers=headers_ig, timeout=12)
+        if res.status_code == 200:
+            html = res.json().get("data", "")
+            links = re.findall(r'href="([^"]+)"[^>]*class="[^"]*abutton[^"]*download', html)
+            if not links:
+                links = re.findall(r'href="(https://[^"]+)"', html)
+            for link in links:
+                if "instagram" in link or "cdn" in link or "fbcdn" in link:
+                    video_url = link.replace("&amp;", "&")
+                    break
     except Exception:
         pass
 
-    # Método 2: Extracción con proxy DD/EE Instagram
+    # Pasarela 2: Instancia Cobalt de respaldo
     if not video_url:
         try:
-            dd_url = url.replace("instagram.com", "ddinstagram.com")
-            headers = {"User-Agent": "TelegramBot (like TwitterBot)"}
-            r = requests.get(dd_url, headers=headers, timeout=12)
-            match = re.search(r'<meta property="og:video" content="([^"]+)"', r.text)
-            if match:
-                video_url = match.group(1).replace("&amp;", "&")
+            r_cobalt = requests.post(
+                "https://api.cobalt.tools",
+                json={"url": url},
+                headers={"Accept": "application/json", "Content-Type": "application/json"},
+                timeout=12
+            )
+            if r_cobalt.status_code == 200:
+                video_url = r_cobalt.json().get("url")
         except Exception:
             pass
 
-    # Método 3: Pasarela VKR
+    # Pasarela 3: API directa VKR
     if not video_url:
         try:
-            r = requests.get(f"https://api.vkrdownloader.com/v1/get?url={url}", timeout=12).json()
-            downloads = r.get("data", {}).get("downloads", [])
+            r_vkr = requests.get(f"https://api.vkrdownloader.com/v1/get?url={url}", timeout=12).json()
+            downloads = r_vkr.get("data", {}).get("downloads", [])
             for d in downloads:
                 if "video" in str(d.get("format", "")).lower() or d.get("format_id") in ["mp4", "video"]:
                     video_url = d.get("url")
@@ -215,6 +223,7 @@ def descargar_instagram(url):
 
     return None
 
+# 3. YOUTUBE (INTACTO: Exactamente el mismo código que ya te funcionó)
 def descargar_youtube(url):
     # Método 1: API externa
     try:
@@ -325,7 +334,7 @@ def recibir_enlace(message):
     if not esta_suscrito(user_id):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("📢 Unirme al Canal", url=CANAL_ENLACE))
-        bot.reply_to(message, "⚠️ Para descargar videos gratis, primero únete a nuestro canal:", reply_markup=markup)
+        bot.reply_to(message, "⚠️️ Para descargar videos gratis, primero únete a nuestro canal:", reply_markup=markup)
         return
 
     puede_descargar, tipo_usuario, info = verificar_estado_usuario(user_id)
