@@ -126,11 +126,16 @@ def descargar_tiktok(url):
         print(f"Error TikTok: {e}")
     return None
 
-# 2. YOUTUBE (CONFIGURACIÓN EXACTA DE LAS 4:31 AM)
+# 2. YOUTUBE (LIMPIEZA DE ENLACE + CLIENTE MÓVIL ESTABLE)
 def descargar_youtube(url):
     try:
+        # Extraer únicamente el ID de 11 caracteres del video/short
+        match = re.search(r'(?:shorts/|v=|youtu\.be/)([a-zA-Z0-9_-]{11})', url)
+        clean_url = f"https://www.youtube.com/watch?v={match.group(1)}" if match else url
+
         os.makedirs("descargas", exist_ok=True)
         out_pattern = f"descargas/yt_{os.urandom(4).hex()}.%(ext)s"
+        
         ydl_opts = {
             'format': 'best[ext=mp4]/best',
             'outtmpl': out_pattern,
@@ -140,7 +145,7 @@ def descargar_youtube(url):
             'socket_timeout': 30,
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android', 'ios']
+                    'player_client': ['android']
                 }
             },
             'http_headers': {
@@ -148,7 +153,7 @@ def descargar_youtube(url):
             }
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+            info = ydl.extract_info(clean_url, download=True)
             filename = ydl.prepare_filename(info)
             base, _ = os.path.splitext(filename)
             mp4_name = base + ".mp4"
