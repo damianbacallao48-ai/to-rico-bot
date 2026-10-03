@@ -125,56 +125,66 @@ def descargar_tiktok(url):
         print(f"Error TikTok: {e}")
     return None
 
-# 2. INSTAGRAM (Instancias comunitarias abiertas sin JWT + CDN scraping)
+# 2. INSTAGRAM (Extractor directo por API CDN sin bloqueo de IP)
 def descargar_instagram(url):
     match = re.search(r'/(?:reel|p|tv)/([a-zA-Z0-9_-]+)', url)
     if not match:
         return None
     shortcode = match.group(1)
-    clean_url = f"https://www.instagram.com/reel/{shortcode}/"
+    clean_target = f"https://www.instagram.com/reel/{shortcode}/"
 
     video_url = None
-    headers_nav = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    headers_nav = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    }
 
-    # Vía 1: Instancias libres comunitarias de Cobalt (sin bloqueo de JWT)
-    instancias_cobalt = [
-        "https://cobalt-api.kwiatekm.tokyo",
-        "https://api.cobalt.030613.xyz",
-        "https://cobalt.xy2401.top"
-    ]
-    for inst in instancias_cobalt:
-        try:
-            r_cob = requests.post(
-                inst,
-                json={"url": clean_url, "videoQuality": "720"},
-                headers={"Accept": "application/json", "Content-Type": "application/json"},
-                timeout=8
-            )
-            if r_cob.status_code == 200:
-                data = r_cob.json()
-                video_url = data.get("url")
-                if video_url:
-                    break
-        except Exception:
-            continue
+    # Opción 1: API directa de extracción CDN SaveIG / Snapinsta
+    try:
+        r_api = requests.post(
+            "https://v3.saveig.app/api/ajaxSearch",
+            data={"q": clean_target, "t": "media", "lang": "en"},
+            headers={
+                "User-Agent": headers_nav["User-Agent"],
+                "X-Requested-With": "XMLHttpRequest",
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
+            },
+            timeout=12
+        ).json()
+        html_res = r_api.get("data", "")
+        # Extraer URL directa del video en formato MP4
+        v_match = re.search(r'href="([^"]+)"[^>]*class="[^"]*download-items[^"]*"', html_res)
+        if not v_match:
+            v_match = re.search(r'href="([^"]+)"[^>]*download', html_res)
+        if v_match:
+            video_url = v_match.group(1).replace("&amp;", "&")
+    except Exception:
+        pass
 
-    # Vía 2: API directa de extracción de media pública
+    # Opción 2: Pasarela DDInstagram
     if not video_url:
         try:
-            r_api = requests.get(f"https://api.agatz.xyz/api/instagram?url={clean_url}", timeout=10).json()
-            if r_api.get("status") == 200:
-                data = r_api.get("data", [])
-                if isinstance(data, list) and len(data) > 0:
-                    video_url = data[0].get("url")
+            r_dd = requests.get(
+                f"https://www.ddinstagram.com/reel/{shortcode}/",
+                headers={"User-Agent": "facebookexternalhit/1.1;line-poker/1.0"},
+                timeout=10
+            )
+            v_meta = re.search(r'<meta\s+property="og:video"\s+content="([^"]+)"', r_dd.text)
+            if not v_meta:
+                v_meta = re.search(r'<meta\s+property="og:video:secure_url"\s+content="([^"]+)"', r_dd.text)
+            if v_meta:
+                video_url = v_meta.group(1).replace("&amp;", "&")
         except Exception:
             pass
 
-    # Vía 3: DDInstagram API endpoint JSON
+    # Opción 3: API REST SnapVid
     if not video_url:
         try:
-            r_dd = requests.get(f"https://api.ddinstagram.com/reel/{shortcode}/", timeout=10).json()
-            if r_dd.get("video_url"):
-                video_url = r_dd.get("video_url")
+            r_snap = requests.get(f"https://api.vkrdownloader.com/v1/get?url={clean_target}", timeout=10).json()
+            downloads = r_snap.get("data", {}).get("downloads", [])
+            for item in downloads:
+                if "video" in str(item.get("format", "")).lower() or item.get("format_id") in ["mp4", "video"]:
+                    video_url = item.get("url")
+                    break
         except Exception:
             pass
 
@@ -193,7 +203,7 @@ def descargar_instagram(url):
             elif os.path.exists(file_path):
                 os.remove(file_path)
         except Exception as e:
-            print(f"Error descargando binario IG: {e}")
+            print(f"Error descargando archivo IG: {e}")
 
     return None
 
