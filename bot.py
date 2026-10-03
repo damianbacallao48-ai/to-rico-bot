@@ -25,7 +25,7 @@ def iniciar_servidor_web():
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
 
-# --- BASE DE DATOS ---
+# --- BASE DE DATOS LOCAL ---
 conn = sqlite3.connect("usuarios.db", check_same_thread=False)
 cursor = conn.cursor()
 cursor.execute('''
@@ -52,7 +52,7 @@ def verificar_estado_usuario(user_id):
 
     descargas, vip_hasta_str = res
 
-    # Comprobar si tiene VIP por fecha
+    # Comprobar si tiene VIP activo
     if vip_hasta_str:
         try:
             vip_hasta = datetime.strptime(vip_hasta_str, "%Y-%m-%d %H:%M:%S")
@@ -90,6 +90,8 @@ def esta_suscrito(user_id):
         return miembro.status in ['creator', 'administrator', 'member']
     except Exception:
         return True
+
+# --- FUNCIONES DE DESCARGA ---
 
 def descargar_tiktok_api(url):
     try:
@@ -154,13 +156,16 @@ def descargar_ytdlp(url):
         'quiet': True,
         'no_warnings': True,
         'max_filesize': 48 * 1024 * 1024,
-        'socket_timeout': 30
+        'socket_timeout': 30,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+        }
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         return ydl.prepare_filename(info)
 
-# --- COMANDOS ---
+# --- COMANDOS Y MENSAJES ---
 
 @bot.message_handler(commands=['start'])
 def bienvenida(message):
@@ -193,7 +198,6 @@ def dar_vip_comando(message):
         fecha_fin = activar_vip_15_dias(target_id)
         bot.reply_to(message, f"✅ Usuario `{target_id}` activado como VIP por 15 días (hasta {fecha_fin}).", parse_mode="Markdown")
         
-        # Avisar al usuario directamente
         try:
             bot.send_message(
                 target_id,
@@ -236,14 +240,14 @@ def recibir_enlace(message):
     os.makedirs("descargas", exist_ok=True)
     archivo = None
 
-            try:
-            if "tiktok.com" in url:
-                archivo = descargar_tiktok_api(url)
-            elif "instagram.com" in url:
-                archivo = descargar_instagram_api(url)
-            if not archivo or not os.path.exists(archivo):
-                archivo = descargar_ytdlp(url)
-
+    try:
+        if "tiktok.com" in url:
+            archivo = descargar_tiktok_api(url)
+        elif "instagram.com" in url:
+            archivo = descargar_instagram_api(url)
+            
+        if not archivo or not os.path.exists(archivo):
+            archivo = descargar_ytdlp(url)
 
         if archivo and os.path.exists(archivo):
             bot.edit_message_text("📤 *Enviando video...*", chat_id=message.chat.id, message_id=msg_espera.message_id, parse_mode="Markdown")
@@ -255,7 +259,6 @@ def recibir_enlace(message):
                     caption="🎬 Video descargado\n📢 Canal: @torico_cuba_db"
                 )
             
-            # Solo suma al contador si no es VIP ni admin
             if tipo_usuario == "free":
                 sumar_descarga(user_id)
 
@@ -275,33 +278,3 @@ if __name__ == "__main__":
     print("Iniciando servicio...")
     threading.Thread(target=iniciar_servidor_web, daemon=True).start()
     bot.infinity_polling(timeout=20, long_polling_timeout=20)
-
-
-def descargar_instagram_api(url):
-    try:
-        # Extrae el enlace directo del video usando una API pública rápida
-        api_endpoint = "https://api.cobalt.tools"
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
-        payload = {"url": url}
-        res = requests.post(api_endpoint, json=payload, headers=headers, timeout=20)
-        
-        if res.status_code == 200:
-            data = res.json()
-            video_url = data.get("url")
-            if video_url:
-                os.makedirs("descargas", exist_ok=True)
-                file_path = f"descargas/insta_{os.urandom(4).hex()}.mp4"
-                with requests.get(video_url, stream=True, timeout=45) as r:
-                    r.raise_for_status()
-                    with open(file_path, "wb") as f:
-                        for chunk in r.iter_content(chunk_size=1024*1024):
-                            if chunk:
-                                f.write(chunk)
-                if os.path.exists(file_path) and os.path.getsize(file_path) > 100 * 1024:
-                    return file_path
-    except Exception as e:
-        print(f"Error Instagram API: {e}")
-    return None
