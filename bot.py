@@ -106,11 +106,13 @@ def sanitizar_enlace(texto):
     
     url = url_match.group(1).strip()
     
+    # Extraer ID limpio de Instagram (Reels, Posts, TV)
     ig_match = re.search(r'(?:instagram\.com|instagr\.am)/(?:reel|p|tv)/([a-zA-Z0-9_-]+)', url)
     if ig_match:
         clean_url = f"https://www.instagram.com/reel/{ig_match.group(1)}/"
         return "instagram", clean_url
 
+    # Normalizar YouTube / Shorts
     yt_match = re.search(r'(?:youtube\.com/shorts/|youtu\.be/|youtube\.com/watch\?v=)([a-zA-Z0-9_-]{11})', url)
     if yt_match:
         clean_url = f"https://www.youtube.com/watch?v={yt_match.group(1)}"
@@ -152,32 +154,43 @@ def descargar_tiktok(url):
         print(f"Error TikTok: {e}")
     return None
 
-# 2. INSTAGRAM (Ajustado con pasarela multi-API dedicada)
+# 2. INSTAGRAM (Motor directo por pasarela SnapSave/FastDL)
 def descargar_instagram(url):
     video_url = None
-    
-    # Pasarela 1: API de SaveIG / FastDl directa
+    headers_common = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "Referer": "https://snapinsta.app/"
+    }
+
+    # Intento 1: API SnapInsta / SaveIG
     try:
-        api_post = "https://v3.igdownloader.app/api/ajaxSearch"
-        headers_ig = {
-            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "X-Requested-With": "XMLHttpRequest"
-        }
-        res = requests.post(api_post, data={"q": url, "t": "media", "lang": "en"}, headers=headers_ig, timeout=12)
-        if res.status_code == 200:
-            html = res.json().get("data", "")
-            links = re.findall(r'href="([^"]+)"[^>]*class="[^"]*abutton[^"]*download', html)
-            if not links:
-                links = re.findall(r'href="(https://[^"]+)"', html)
-            for link in links:
-                if "instagram" in link or "cdn" in link or "fbcdn" in link:
-                    video_url = link.replace("&amp;", "&")
-                    break
+        data_payload = {"url": url, "action": "post"}
+        r = requests.post("https://snapinsta.app/action.php", data=data_payload, headers=headers_common, timeout=12)
+        if r.status_code == 200:
+            html = r.text
+            match = re.search(r'href="([^"]+)"[^>]*download', html)
+            if not match:
+                match = re.search(r'(https://[^"]+fbcdn\.net/[^"]+)', html)
+            if match:
+                video_url = match.group(1).replace("&amp;", "&")
     except Exception:
         pass
 
-    # Pasarela 2: Instancia Cobalt de respaldo
+    # Intento 2: Pasarela directa de metadatos abiertos
+    if not video_url:
+        try:
+            api_ep = f"https://api.ryzendesu.vip/api/downloader/igdl?url={url}"
+            r2 = requests.get(api_ep, headers=headers_common, timeout=12).json()
+            if isinstance(r2, list) and len(r2) > 0:
+                video_url = r2[0].get("url")
+            elif isinstance(r2, dict):
+                arr = r2.get("data", [])
+                if arr:
+                    video_url = arr[0].get("url")
+        except Exception:
+            pass
+
+    # Intento 3: Instancia Cobalt dedicada
     if not video_url:
         try:
             r_cobalt = requests.post(
@@ -191,24 +204,11 @@ def descargar_instagram(url):
         except Exception:
             pass
 
-    # Pasarela 3: API directa VKR
-    if not video_url:
-        try:
-            r_vkr = requests.get(f"https://api.vkrdownloader.com/v1/get?url={url}", timeout=12).json()
-            downloads = r_vkr.get("data", {}).get("downloads", [])
-            for d in downloads:
-                if "video" in str(d.get("format", "")).lower() or d.get("format_id") in ["mp4", "video"]:
-                    video_url = d.get("url")
-                    break
-        except Exception:
-            pass
-
     if video_url:
         try:
             os.makedirs("descargas", exist_ok=True)
             file_path = f"descargas/ig_{os.urandom(4).hex()}.mp4"
-            headers_dl = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-            with requests.get(video_url, headers=headers_dl, stream=True, timeout=50) as req:
+            with requests.get(video_url, headers={"User-Agent": headers_common["User-Agent"]}, stream=True, timeout=50) as req:
                 req.raise_for_status()
                 with open(file_path, "wb") as f:
                     for chunk in req.iter_content(chunk_size=1024*1024):
@@ -219,13 +219,12 @@ def descargar_instagram(url):
             elif os.path.exists(file_path):
                 os.remove(file_path)
         except Exception as e:
-            print(f"Error descargando binario IG: {e}")
+            print(f"Error descargando archivo IG: {e}")
 
     return None
 
-# 3. YOUTUBE (INTACTO: Exactamente el mismo código que ya te funcionó)
+# 3. YOUTUBE (INTACTO)
 def descargar_youtube(url):
-    # Método 1: API externa
     try:
         r = requests.post(
             "https://api.cobalt.tools",
@@ -249,7 +248,6 @@ def descargar_youtube(url):
     except Exception:
         pass
 
-    # Método 2: yt-dlp con emulación móvil
     try:
         os.makedirs("descargas", exist_ok=True)
         out_pattern = f"descargas/yt_{os.urandom(4).hex()}.%(ext)s"
