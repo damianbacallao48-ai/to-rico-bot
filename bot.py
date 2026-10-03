@@ -149,7 +149,7 @@ def descargar_pinterest(url):
     return None
 
 # ==========================================
-# 3. MOTOR INSTAGRAM (EXTRACTOR OPEN GRAPH / CDN)
+# 3. MOTOR INSTAGRAM (ENDPOINT INTERNO MÓVIL)
 # ==========================================
 def descargar_instagram(url):
     try:
@@ -157,37 +157,38 @@ def descargar_instagram(url):
         if not match:
             return None
         shortcode = match.group(1)
-        clean_target = f"https://www.instagram.com/reel/{shortcode}/"
 
+        # Convertir shortcode a ID numérico
+        alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
+        media_id = 0
+        for letter in shortcode:
+            media_id = (media_id * 64) + alphabet.index(letter)
+
+        api_url = f"https://i.instagram.com/api/v1/media/{media_id}/info/"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5"
+            "User-Agent": "Instagram 278.0.0.19.115 Android (30/11; 480dpi; 1080x2340; samsung; SM-G988B; exynos990; es_ES; 460980061)",
+            "Accept-Language": "es-ES,es;q=0.9",
+            "X-IG-App-ID": "936619743392459",
+            "Accept": "*/*"
         }
 
-        r = requests.get(clean_target, headers=headers, timeout=12)
+        r = requests.get(api_url, headers=headers, timeout=12)
         video_url = None
-        
-        # Intento A: Metadatos OpenGraph (og:video)
-        og_match = re.search(r'<meta\s+(?:property|name)=["\']og:video["\']\s+content=["\']([^"\']+)["\']', r.text)
-        if og_match:
-            video_url = og_match.group(1).replace("&amp;", "&")
-        else:
-            # Intento B: Script/JSON embebido
-            raw_urls = re.findall(r'"video_url":"([^"]+)"', r.text)
-            if raw_urls:
-                video_url = raw_urls[0].encode().decode('unicode_escape').replace(r'\/', '/')
 
-        # Intento C: Respaldo por CDN directo
+        if r.status_code == 200:
+            data = r.json()
+            items = data.get("items", [])
+            if items:
+                video_versions = items[0].get("video_versions", [])
+                if video_versions:
+                    video_url = video_versions[0].get("url")
+
         if not video_url:
-            try:
-                res_api = requests.get(f"https://api.vkrdownloader.com/v1/get?url={clean_target}", timeout=10).json()
-                for item in res_api.get("data", {}).get("downloads", []):
-                    if "video" in str(item.get("format", "")).lower() or item.get("format_id") in ["mp4", "video"]:
-                        video_url = item.get("url")
-                        break
-            except Exception:
-                pass
+            embed_url = f"https://www.instagram.com/p/{shortcode}/embed/captioned/"
+            r_embed = requests.get(embed_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+            vid = re.search(r'"video_url":"([^"]+)"', r_embed.text)
+            if vid:
+                video_url = vid.group(1).encode().decode('unicode_escape').replace(r'\/', '/')
 
         if video_url:
             os.makedirs("descargas", exist_ok=True)
@@ -198,6 +199,7 @@ def descargar_instagram(url):
     except Exception as e:
         print(f"Error Instagram: {e}")
     return None
+
 
 # ==========================================
 # COMANDOS Y MENSAJES
