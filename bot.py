@@ -29,7 +29,7 @@ def iniciar_servidor_web():
     app.run(host="0.0.0.0", port=port)
 
 # ==========================================
-# BASE DE DATOS LOCAL (SQLite)
+# BASE DE DATOS LOCAL
 # ==========================================
 conn = sqlite3.connect("usuarios.db", check_same_thread=False)
 cursor = conn.cursor()
@@ -95,9 +95,10 @@ def esta_suscrito(user_id):
         return True
 
 # ==========================================
-# MOTORES DE DESCARGA MULTIPLATAFORMA
+# MOTORES DE DESCARGA
 # ==========================================
 
+# TikTok (intacto)
 def descargar_tiktok_api(url):
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -123,22 +124,57 @@ def descargar_tiktok_api(url):
         print(f"Error TikTok API: {e}")
     return None
 
-def descargar_youtube_api(url):
-    """Descarga de YouTube a través de puente API externo para evitar el bloqueo antibot de Railway."""
+# Instagram (corregido con API dedicada para saltar el bloqueo de login)
+def descargar_instagram_api(url):
     try:
-        api_url = f"https://api.invidious.io/api/v1/videos/"
-        # Opciones de proxies/APIs rotativas directas
-        endpoints = [
-            f"https://yt-api-service.onrender.com/download?url={url}",
-            f"https://pipedapi.kavin.rocks/streams/"
-        ]
+        clean_url = url.split("?")[0].rstrip("/") + "/"
+        api_url = f"https://api.vkrdownloader.com/v1/get?url={clean_url}"
+        r = requests.get(api_url, timeout=20).json()
         
-        # Primero intentamos Cobalt con headers de túnel
+        video_url = None
+        data = r.get("data", {})
+        
+        # Buscar el stream de video
+        if isinstance(data, dict):
+            downloads = data.get("downloads", [])
+            for item in downloads:
+                if item.get("format_id") in ["mp4", "video"] or "video" in str(item.get("format", "")).lower():
+                    video_url = item.get("url")
+                    break
+            if not video_url and downloads:
+                video_url = downloads[0].get("url")
+
+        # Fallback a Cobalt
+        if not video_url:
+            cobalt_headers = {"Accept": "application/json", "Content-Type": "application/json"}
+            c_res = requests.post("https://api.cobalt.tools", json={"url": clean_url}, headers=cobalt_headers, timeout=15)
+            if c_res.status_code == 200:
+                video_url = c_res.json().get("url")
+
+        if video_url:
+            os.makedirs("descargas", exist_ok=True)
+            file_path = f"descargas/insta_{os.urandom(4).hex()}.mp4"
+            with requests.get(video_url, stream=True, timeout=50) as req:
+                req.raise_for_status()
+                with open(file_path, "wb") as f:
+                    for chunk in req.iter_content(chunk_size=1024*1024):
+                        if chunk:
+                            f.write(chunk)
+            if os.path.exists(file_path) and os.path.getsize(file_path) > 100 * 1024:
+                return file_path
+            elif os.path.exists(file_path):
+                os.remove(file_path)
+    except Exception as e:
+        print(f"Error Instagram API: {e}")
+    return None
+
+# YouTube (intacto: la misma configuración móvil que ya te funcionó)
+def descargar_youtube_api(url):
+    try:
         cobalt_url = "https://api.cobalt.tools"
         headers = {
             "Accept": "application/json",
-            "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+            "Content-Type": "application/json"
         }
         res = requests.post(cobalt_url, json={"url": url, "videoQuality": "720"}, headers=headers, timeout=15)
         if res.status_code == 200:
@@ -156,31 +192,6 @@ def descargar_youtube_api(url):
                     return file_path
     except Exception as e:
         print(f"Error en API YouTube: {e}")
-    return None
-
-def descargar_instagram_api(url):
-    try:
-        api_endpoint = "https://api.cobalt.tools"
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
-        res = requests.post(api_endpoint, json={"url": url}, headers=headers, timeout=15)
-        if res.status_code == 200:
-            v_url = res.json().get("url")
-            if v_url:
-                os.makedirs("descargas", exist_ok=True)
-                file_path = f"descargas/insta_{os.urandom(4).hex()}.mp4"
-                with requests.get(v_url, stream=True, timeout=60) as r:
-                    r.raise_for_status()
-                    with open(file_path, "wb") as f:
-                        for chunk in r.iter_content(chunk_size=1024*1024):
-                            if chunk:
-                                f.write(chunk)
-                if os.path.exists(file_path) and os.path.getsize(file_path) > 100 * 1024:
-                    return file_path
-    except Exception as e:
-        print(f"Error Instagram API: {e}")
     return None
 
 def descargar_ytdlp(url):
@@ -219,16 +230,15 @@ def descargar_ytdlp(url):
 def bienvenida(message):
     user_id = message.from_user.id
     _, _, texto_estado = verificar_estado_usuario(user_id)
-    
     texto = (
-        "⚡ *¡Bienvenido al Descargador Rápido HD!*\n\n"
-        "Baja videos sin marcas de agua y en la mejor calidad de:\n"
+        "⚡ *¡Bienvenido al Descargador Rápido!*\n\n"
+        "Envía el enlace de cualquier video:\n"
         "• 🎵 *TikTok* (sin marca de agua)\n"
         "• 📸 *Instagram Reels y Videos*\n"
         "• 🔴 *YouTube Shorts y Videos*\n\n"
-        f"📊 *Tu cuenta:* `{texto_estado}`\n"
+        f"📊 *Tu plan:* `{texto_estado}`\n"
         f"🆔 *Tu ID:* `{user_id}`\n\n"
-        "👉 *Pega el enlace del video aquí abajo para descargarlo:*"
+        "👉 *Pega el enlace aquí abajo:*"
     )
     bot.reply_to(message, texto, parse_mode="Markdown")
 
@@ -245,14 +255,11 @@ def dar_vip_comando(message):
     try:
         target_id = int(partes[1])
         fecha_fin = activar_vip_15_dias(target_id)
-        bot.reply_to(message, f"✅ *VIP Activado!*\n\nUsuario: `{target_id}`\nVálido hasta: `{fecha_fin}`", parse_mode="Markdown")
-        
+        bot.reply_to(message, f"✅ Usuario `{target_id}` activado como VIP por 15 días (hasta {fecha_fin}).", parse_mode="Markdown")
         try:
             bot.send_message(
                 target_id,
-                f"🎉 *¡Tu suscripción VIP ha sido activada con éxito!*\n\n"
-                f"Tienes descargas ilimitadas a máxima velocidad durante 15 días (hasta el `{fecha_fin}`).\n\n"
-                "¡Disfruta del servicio!",
+                f"🎉 *¡Tu suscripción VIP ha sido activada!*\n\nTienes descargas ilimitadas durante 15 días (hasta el {fecha_fin}). ¡Que lo disfrutes!",
                 parse_mode="Markdown"
             )
         except Exception:
@@ -271,34 +278,26 @@ def recibir_enlace(message):
     if not esta_suscrito(user_id):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("📢 Unirme al Canal", url=CANAL_ENLACE))
-        bot.reply_to(
-            message,
-            "⚠️ *Para poder descargar videos gratis, primero debes unirte a nuestro canal oficial:*\n\n"
-            "Únete y vuelve a enviar el enlace.",
-            reply_markup=markup,
-            parse_mode="Markdown"
-        )
+        bot.reply_to(message, "⚠️ Para descargar videos gratis, primero únete a nuestro canal:", reply_markup=markup)
         return
 
     puede_descargar, tipo_usuario, info = verificar_estado_usuario(user_id)
     if not puede_descargar:
         contacto_link = f"https://t.me/{ADMIN_USER.replace('@', '')}"
         markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("⭐ Activar VIP (15 Días)", url=contacto_link))
-        
+        markup.add(types.InlineKeyboardButton("⭐ Adquirir VIP (15 Días)", url=contacto_link))
         texto_bloqueo = (
-            "🚫 *Has consumido tus 2 descargas gratuitas de prueba.*\n\n"
-            "💎 *Pasa al Pase VIP (15 días completos):*\n"
-            "✅ Descargas 100% ilimitadas.\n"
-            "✅ Máxima velocidad sin tiempos de espera.\n"
-            "✅ Soporte activo 24/7.\n\n"
-            f"🆔 *Tu ID:* `{user_id}` *(envíalo al contactar)*\n\n"
-            "👇 *Toca el botón de abajo para solicitar tu activación inmediata:*"
+            "❌ *Has alcanzado el límite de 2 descargas gratuitas.*\n\n"
+            "🌟 *Pase VIP (15 días de acceso ilimitado):*\n"
+            "• Descargas sin límite.\n"
+            "• Máxima velocidad de entrega.\n\n"
+            f"🆔 *Tu ID para activación:* `{user_id}`\n\n"
+            "Toca el botón de abajo para activar tu suscripción."
         )
         bot.reply_to(message, texto_bloqueo, reply_markup=markup, parse_mode="Markdown")
         return
 
-    msg_espera = bot.reply_to(message, "⚡ *Procesando y descargando video...*", parse_mode="Markdown")
+    msg_espera = bot.reply_to(message, "⏳ *Descargando video...*", parse_mode="Markdown")
     os.makedirs("descargas", exist_ok=True)
     archivo = None
 
@@ -307,34 +306,29 @@ def recibir_enlace(message):
         if "tiktok.com" in url:
             archivo = descargar_tiktok_api(url)
             
-        # 2. Instagram
+        # 2. Instagram (Nunca usa yt-dlp para no disparar el error de cookies)
         elif "instagram.com" in url:
             archivo = descargar_instagram_api(url)
             
-        # 3. YouTube Shorts / Video
+        # 3. YouTube (Shorts o videos)
         elif "youtube.com" in url or "youtu.be" in url:
             archivo = descargar_youtube_api(url)
+            if not archivo or not os.path.exists(archivo):
+                archivo = descargar_ytdlp(url)
 
-        # 4. Respaldo general usando extractor cliente iOS/Android
+        # 4. Otras plataformas
         if not archivo or not os.path.exists(archivo):
-            archivo = descargar_ytdlp(url)
+            if "instagram.com" not in url:
+                archivo = descargar_ytdlp(url)
 
         if archivo and os.path.exists(archivo):
-            bot.edit_message_text("📤 *Subiendo video a Telegram...*", chat_id=message.chat.id, message_id=msg_espera.message_id, parse_mode="Markdown")
-            
-            pie_de_video = (
-                "🎬 *Video descargado con éxito*\n\n"
-                "⚡ *Baja videos de TikTok, Reels y YouTube Shorts con este bot.*\n"
-                "📢 *Canal oficial:* @torico_cuba_db"
-            )
-            
+            bot.edit_message_text("📤 *Enviando video...*", chat_id=message.chat.id, message_id=msg_espera.message_id, parse_mode="Markdown")
             with open(archivo, 'rb') as f:
                 bot.send_video(
                     message.chat.id,
                     f,
                     supports_streaming=True,
-                    caption=pie_de_video,
-                    parse_mode="Markdown"
+                    caption="🎬 Video descargado con éxito\n📢 Canal: @torico_cuba_db"
                 )
             
             if tipo_usuario == "free":
@@ -342,11 +336,7 @@ def recibir_enlace(message):
 
             bot.delete_message(message.chat.id, msg_espera.message_id)
         else:
-            bot.edit_message_text(
-                "❌ No se pudo descargar este enlace. Asegúrate de que el contenido no sea privado ni supere los 50MB.",
-                chat_id=message.chat.id,
-                message_id=msg_espera.message_id
-            )
+            bot.edit_message_text("❌ No se pudo descargar el video. Verifica que la cuenta no sea privada y vuelve a intentarlo.", chat_id=message.chat.id, message_id=msg_espera.message_id)
     except Exception as e:
         bot.edit_message_text(f"❌ Error al procesar: {e}", chat_id=message.chat.id, message_id=msg_espera.message_id)
     finally:
