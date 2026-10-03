@@ -124,37 +124,57 @@ def descargar_tiktok_api(url):
         print(f"Error TikTok API: {e}")
     return None
 
-# Instagram (corregido con API dedicada para saltar el bloqueo de login)
+# Instagram (Multi-servidor robusto)
 def descargar_instagram_api(url):
+    clean_url = url.split("?")[0].rstrip("/") + "/"
+    video_url = None
+
+    # Proveedor 1: Cobalt Tools API
     try:
-        clean_url = url.split("?")[0].rstrip("/") + "/"
-        api_url = f"https://api.vkrdownloader.com/v1/get?url={clean_url}"
-        r = requests.get(api_url, timeout=20).json()
-        
-        video_url = None
-        data = r.get("data", {})
-        
-        # Buscar el stream de video
-        if isinstance(data, dict):
-            downloads = data.get("downloads", [])
-            for item in downloads:
-                if item.get("format_id") in ["mp4", "video"] or "video" in str(item.get("format", "")).lower():
-                    video_url = item.get("url")
-                    break
-            if not video_url and downloads:
-                video_url = downloads[0].get("url")
+        c_res = requests.post(
+            "https://api.cobalt.tools",
+            json={"url": clean_url},
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            timeout=15
+        )
+        if c_res.status_code == 200:
+            video_url = c_res.json().get("url")
+    except Exception:
+        pass
 
-        # Fallback a Cobalt
-        if not video_url:
-            cobalt_headers = {"Accept": "application/json", "Content-Type": "application/json"}
-            c_res = requests.post("https://api.cobalt.tools", json={"url": clean_url}, headers=cobalt_headers, timeout=15)
-            if c_res.status_code == 200:
-                video_url = c_res.json().get("url")
+    # Proveedor 2: FastDL / SnapInsta Proxy
+    if not video_url:
+        try:
+            p_res = requests.get(f"https://api.ryzendesu.vip/api/downloader/igdl?url={clean_url}", timeout=15)
+            if p_res.status_code == 200:
+                p_data = p_res.json()
+                if isinstance(p_data, list) and len(p_data) > 0:
+                    video_url = p_data[0].get("url")
+                elif isinstance(p_data, dict):
+                    data_list = p_data.get("data", [])
+                    if data_list:
+                        video_url = data_list[0].get("url")
+        except Exception:
+            pass
 
-        if video_url:
+    # Proveedor 3: SnapSave API
+    if not video_url:
+        try:
+            s_res = requests.get(f"https://vihangayt.me/download/instagram?url={clean_url}", timeout=15)
+            if s_res.status_code == 200:
+                s_json = s_res.json()
+                data_arr = s_json.get("data", {}).get("data", [])
+                if data_arr:
+                    video_url = data_arr[0].get("url")
+        except Exception:
+            pass
+
+    if video_url:
+        try:
             os.makedirs("descargas", exist_ok=True)
             file_path = f"descargas/insta_{os.urandom(4).hex()}.mp4"
-            with requests.get(video_url, stream=True, timeout=50) as req:
+            headers_dl = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            with requests.get(video_url, headers=headers_dl, stream=True, timeout=50) as req:
                 req.raise_for_status()
                 with open(file_path, "wb") as f:
                     for chunk in req.iter_content(chunk_size=1024*1024):
@@ -164,11 +184,12 @@ def descargar_instagram_api(url):
                 return file_path
             elif os.path.exists(file_path):
                 os.remove(file_path)
-    except Exception as e:
-        print(f"Error Instagram API: {e}")
+        except Exception as e:
+            print(f"Error descargando binario Instagram: {e}")
+
     return None
 
-# YouTube (intacto: la misma configuración móvil que ya te funcionó)
+# YouTube (intacto)
 def descargar_youtube_api(url):
     try:
         cobalt_url = "https://api.cobalt.tools"
@@ -306,7 +327,7 @@ def recibir_enlace(message):
         if "tiktok.com" in url:
             archivo = descargar_tiktok_api(url)
             
-        # 2. Instagram (Nunca usa yt-dlp para no disparar el error de cookies)
+        # 2. Instagram (Usa red de servidores especializados)
         elif "instagram.com" in url:
             archivo = descargar_instagram_api(url)
             
