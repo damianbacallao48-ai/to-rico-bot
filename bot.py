@@ -32,7 +32,7 @@ def iniciar_servidor_web():
     app.run(host="0.0.0.0", port=port)
 
 # ==========================================
-# BASE DE DATOS
+# BASE DE DATOS LOCAL
 # ==========================================
 conn = sqlite3.connect("usuarios.db", check_same_thread=False)
 cursor = conn.cursor()
@@ -111,7 +111,7 @@ def bajar_archivo(url_remota, ruta_local):
     return os.path.exists(ruta_local) and os.path.getsize(ruta_local) > 50 * 1024
 
 # ==========================================
-# 1. MOTOR TIKTOK
+# 1. MOTOR TIKTOK (VIDEO Y MP3)
 # ==========================================
 def obtener_datos_tiktok(url):
     try:
@@ -126,7 +126,7 @@ def obtener_datos_tiktok(url):
     return None
 
 # ==========================================
-# 2. MOTOR PINTEREST (FUNCIONA SIN BLOQUEO EN RAILWAY)
+# 2. MOTOR PINTEREST
 # ==========================================
 def descargar_pinterest(url):
     try:
@@ -149,6 +149,57 @@ def descargar_pinterest(url):
     return None
 
 # ==========================================
+# 3. MOTOR INSTAGRAM (EXTRACTOR OPEN GRAPH / CDN)
+# ==========================================
+def descargar_instagram(url):
+    try:
+        match = re.search(r'/(?:reel|p|tv)/([a-zA-Z0-9_-]+)', url)
+        if not match:
+            return None
+        shortcode = match.group(1)
+        clean_target = f"https://www.instagram.com/reel/{shortcode}/"
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5"
+        }
+
+        r = requests.get(clean_target, headers=headers, timeout=12)
+        video_url = None
+        
+        # Intento A: Metadatos OpenGraph (og:video)
+        og_match = re.search(r'<meta\s+(?:property|name)=["\']og:video["\']\s+content=["\']([^"\']+)["\']', r.text)
+        if og_match:
+            video_url = og_match.group(1).replace("&amp;", "&")
+        else:
+            # Intento B: Script/JSON embebido
+            raw_urls = re.findall(r'"video_url":"([^"]+)"', r.text)
+            if raw_urls:
+                video_url = raw_urls[0].encode().decode('unicode_escape').replace(r'\/', '/')
+
+        # Intento C: Respaldo por CDN directo
+        if not video_url:
+            try:
+                res_api = requests.get(f"https://api.vkrdownloader.com/v1/get?url={clean_target}", timeout=10).json()
+                for item in res_api.get("data", {}).get("downloads", []):
+                    if "video" in str(item.get("format", "")).lower() or item.get("format_id") in ["mp4", "video"]:
+                        video_url = item.get("url")
+                        break
+            except Exception:
+                pass
+
+        if video_url:
+            os.makedirs("descargas", exist_ok=True)
+            archivo_local = f"descargas/ig_{shortcode}.mp4"
+            if bajar_archivo(video_url, archivo_local):
+                return archivo_local
+
+    except Exception as e:
+        print(f"Error Instagram: {e}")
+    return None
+
+# ==========================================
 # COMANDOS Y MENSAJES
 # ==========================================
 
@@ -159,8 +210,9 @@ def bienvenida(message):
     texto = (
         "⚡ *¡Bienvenido al Descargador Pro!*\n\n"
         "Envía el enlace de cualquier video:\n"
-        "• 🎵 *TikTok* (Video HD sin marca o Audio MP3)\n"
-        "• 📌 *Pinterest* (Videos e imágenes en máxima calidad)\n\n"
+        "• 🎵 *TikTok* (Video sin marca o Audio MP3)\n"
+        "• 📸 *Instagram Reels y Posts*\n"
+        "• 📌 *Pinterest* (Videos e imágenes HD)\n\n"
         f"📊 *Tu plan:* `{texto_estado}`\n"
         f"🆔 *Tu ID:* `{user_id}`\n\n"
         "👉 *Pega el enlace aquí abajo:*"
@@ -200,7 +252,7 @@ def recibir_enlace(message):
     if not esta_suscrito(user_id):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("📢 Unirme al Canal", url=CANAL_ENLACE))
-        bot.reply_to(message, "⚠️ Para descargar videos gratis, primero únete a nuestro canal:", reply_markup=markup)
+        bot.reply_to(message, "⚠️ Para descargar contenido gratis, primero únete a nuestro canal:", reply_markup=markup)
         return
 
     puede_descargar, tipo_usuario, _ = verificar_estado_usuario(user_id)
@@ -217,7 +269,7 @@ def recibir_enlace(message):
         bot.reply_to(message, texto_bloqueo, reply_markup=markup, parse_mode="Markdown")
         return
 
-    # CASO 1: TIKTOK (Pregunta Video o Audio MP3)
+    # CASO 1: TIKTOK (Menú interactivo Video o MP3)
     if "tiktok.com" in raw_text:
         msg_espera = bot.reply_to(message, "🔍 *Analizando TikTok...*", parse_mode="Markdown")
         datos = obtener_datos_tiktok(raw_text)
@@ -246,7 +298,33 @@ def recibir_enlace(message):
         )
         return
 
-    # CASO 2: PINTEREST
+    # CASO 2: INSTAGRAM
+    if "instagram.com" in raw_text or "instagr.am" in raw_text:
+        msg_espera = bot.reply_to(message, "⏳ *Descargando de Instagram...*", parse_mode="Markdown")
+        archivo = descargar_instagram(raw_text)
+
+        if archivo and os.path.exists(archivo):
+            bot.edit_message_text("📤 *Enviando Reel...*", chat_id=message.chat.id, message_id=msg_espera.message_id, parse_mode="Markdown")
+            with open(archivo, 'rb') as f:
+                bot.send_video(
+                    message.chat.id,
+                    f,
+                    supports_streaming=True,
+                    caption="📸 *Reel de Instagram descargado*\n📢 *Canal oficial:* @torico_cuba_db",
+                    parse_mode="Markdown"
+                )
+            if tipo_usuario == "free":
+                sumar_descarga(user_id)
+            bot.delete_message(message.chat.id, msg_espera.message_id)
+            try:
+                os.remove(archivo)
+            except Exception:
+                pass
+        else:
+            bot.edit_message_text("❌ No se pudo descargar este contenido de Instagram. Asegúrate de que la cuenta sea pública.", chat_id=message.chat.id, message_id=msg_espera.message_id)
+        return
+
+    # CASO 3: PINTEREST
     if "pinterest.com" in raw_text or "pin.it" in raw_text:
         msg_espera = bot.reply_to(message, "⏳ *Descargando de Pinterest...*", parse_mode="Markdown")
         archivo = descargar_pinterest(raw_text)
@@ -272,12 +350,12 @@ def recibir_enlace(message):
             bot.edit_message_text("❌ No se pudo descargar este enlace de Pinterest.", chat_id=message.chat.id, message_id=msg_espera.message_id)
         return
 
-    # CASO 3: OTRAS REDES EN MANTENIMIENTO
+    # CASO 4: OTRAS REDES NO SOPORTADAS
     bot.reply_to(
         message,
-        "🛠 *Módulo en mantenimiento.*\n\n"
-        "Por el momento están habilitadas las descargas de:\n"
+        "💡 *Plataformas compatibles actualmente:*\n\n"
         "• 🎵 *TikTok* (Video y MP3)\n"
+        "• 📸 *Instagram Reels y Posts*\n"
         "• 📌 *Pinterest* (Videos e imágenes)",
         parse_mode="Markdown"
     )
@@ -350,6 +428,7 @@ def procesar_seleccion_tiktok(call):
                 pass
 
 if __name__ == "__main__":
-    print("Iniciando bot con TikTok y Pinterest...")
+    print("Iniciando bot con TikTok, Pinterest e Instagram...")
     threading.Thread(target=iniciar_servidor_web, daemon=True).start()
     bot.infinity_polling(timeout=20, long_polling_timeout=20)
+
