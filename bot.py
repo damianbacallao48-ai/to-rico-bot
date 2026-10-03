@@ -24,7 +24,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot activo 24/7"
+    return "Bot activo v2"
 
 def iniciar_servidor_web():
     port = int(os.environ.get("PORT", 8080))
