@@ -125,72 +125,64 @@ def descargar_tiktok(url):
         print(f"Error TikTok: {e}")
     return None
 
-# 2. INSTAGRAM (API REST directa con extracción JSON de CDN)
+# 2. INSTAGRAM (yt-dlp con emulación móvil de Instagram App sin necesidad de cookies)
 def descargar_instagram(url):
+    # Aislar shortcode puro del reel o post
     match = re.search(r'/(?:reel|p|tv)/([a-zA-Z0-9_-]+)', url)
     if not match:
         return None
     shortcode = match.group(1)
-    clean_target = f"https://www.instagram.com/reel/{shortcode}/"
+    clean_url = f"https://www.instagram.com/reel/{shortcode}/"
 
-    video_url = None
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    os.makedirs("descargas", exist_ok=True)
+    out_pattern = f"descargas/ig_{os.urandom(4).hex()}.%(ext)s"
 
-    # Vía 1: Endpoint de API SnapTube/SaveVideo
+    # Método 1: yt-dlp con emulador nativo de cliente móvil Instagram
+    ydl_opts = {
+        'format': 'best[ext=mp4]/best',
+        'outtmpl': out_pattern,
+        'quiet': True,
+        'no_warnings': True,
+        'max_filesize': 48 * 1024 * 1024,
+        'socket_timeout': 25,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 13; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36 Instagram 302.0.0.34.111',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Sec-Fetch-Mode': 'navigate',
+            'X-IG-App-ID': '936619743392459'
+        }
+    }
     try:
-        api_url = f"https://delirius-apiofc.vercel.app/download/instagram?url={clean_target}"
-        res = requests.get(api_url, headers=headers, timeout=10).json()
-        if res.get("status"):
-            data = res.get("data", [])
-            if isinstance(data, list) and len(data) > 0:
-                for item in data:
-                    if item.get("type") == "video" or "video" in str(item.get("url", "")):
-                        video_url = item.get("url")
-                        break
-                if not video_url and data[0].get("url"):
-                    video_url = data[0].get("url")
-    except Exception:
-        pass
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(clean_url, download=True)
+            filename = ydl.prepare_filename(info)
+            base, _ = os.path.splitext(filename)
+            mp4_name = base + ".mp4"
+            if os.path.exists(mp4_name):
+                return mp4_name
+            return filename
+    except Exception as e:
+        print(f"Intento 1 yt-dlp falló: {e}")
 
-    # Vía 2: Instancia pública de API Snapsave
-    if not video_url:
-        try:
-            api2 = f"https://api.siputzx.my.id/api/d/igdl?url={clean_target}"
-            res2 = requests.get(api2, headers=headers, timeout=10).json()
-            if res2.get("status"):
-                d_list = res2.get("data", [])
-                if isinstance(d_list, list) and len(d_list) > 0:
-                    video_url = d_list[0].get("url")
-        except Exception:
-            pass
-
-    # Vía 3: API directa Instander
-    if not video_url:
-        try:
-            api3 = f"https://api.guruapi.tech/insta/v1/igdl?url={clean_target}"
-            res3 = requests.get(api3, headers=headers, timeout=10).json()
-            arr = res3.get("media", [])
-            if arr:
-                video_url = arr[0].get("url")
-        except Exception:
-            pass
-
-    if video_url:
-        try:
-            os.makedirs("descargas", exist_ok=True)
-            file_path = f"descargas/ig_{os.urandom(4).hex()}.mp4"
-            with requests.get(video_url, headers=headers, stream=True, timeout=50) as req:
-                req.raise_for_status()
-                with open(file_path, "wb") as f:
-                    for chunk in req.iter_content(chunk_size=1024*1024):
-                        if chunk:
-                            f.write(chunk)
-            if os.path.exists(file_path) and os.path.getsize(file_path) > 100 * 1024:
-                return file_path
-            elif os.path.exists(file_path):
-                os.remove(file_path)
-        except Exception as e:
-            print(f"Error descargando binario IG: {e}")
+    # Método 2: Extractor directo mediante API Cobalt dedicada a Instagram
+    try:
+        payload = {"url": clean_url}
+        h_cobalt = {"Accept": "application/json", "Content-Type": "application/json"}
+        r = requests.post("https://api.cobalt.tools", json=payload, headers=h_cobalt, timeout=12)
+        if r.status_code == 200:
+            video_url = r.json().get("url")
+            if video_url:
+                file_path = f"descargas/ig_{os.urandom(4).hex()}.mp4"
+                with requests.get(video_url, stream=True, timeout=45) as req:
+                    req.raise_for_status()
+                    with open(file_path, "wb") as f:
+                        for chunk in req.iter_content(chunk_size=1024*1024):
+                            if chunk:
+                                f.write(chunk)
+                if os.path.exists(file_path) and os.path.getsize(file_path) > 100 * 1024:
+                    return file_path
+    except Exception as e:
+        print(f"Intento 2 Cobalt IG falló: {e}")
 
     return None
 
