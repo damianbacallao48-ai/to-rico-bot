@@ -208,11 +208,14 @@ def recibir_enlace(message):
     os.makedirs("descargas", exist_ok=True)
     archivo = None
 
-    try:
-        if "tiktok.com" in url:
-            archivo = descargar_tiktok_api(url)
-        if not archivo or not os.path.exists(archivo):
-            archivo = descargar_ytdlp(url)
+            try:
+            if "tiktok.com" in url:
+                archivo = descargar_tiktok_api(url)
+            elif "instagram.com" in url:
+                archivo = descargar_instagram_api(url)
+            if not archivo or not os.path.exists(archivo):
+                archivo = descargar_ytdlp(url)
+
 
         if archivo and os.path.exists(archivo):
             bot.edit_message_text("📤 *Enviando video...*", chat_id=message.chat.id, message_id=msg_espera.message_id, parse_mode="Markdown")
