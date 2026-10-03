@@ -96,40 +96,10 @@ def esta_suscrito(user_id):
         return True
 
 # ==========================================
-# LIMPIEZA AUTOMÁTICA DE ENLACES
-# ==========================================
-
-def sanitizar_enlace(texto):
-    url_match = re.search(r'(https?://[^\s]+)', texto)
-    if not url_match:
-        return None, None
-    
-    url = url_match.group(1).strip()
-    
-    # Instagram: aislar el código limpio del reel/post
-    ig_match = re.search(r'(?:instagram\.com|instagr\.am)/(?:reel|p|tv)/([a-zA-Z0-9_-]+)', url)
-    if ig_match:
-        clean_url = f"https://www.instagram.com/reel/{ig_match.group(1)}/"
-        return "instagram", clean_url
-
-    # YouTube: extraer ID limpio
-    yt_match = re.search(r'(?:youtube\.com/shorts/|youtu\.be/|youtube\.com/watch\?v=)([a-zA-Z0-9_-]{11})', url)
-    if yt_match:
-        clean_url = f"https://www.youtube.com/watch?v={yt_match.group(1)}"
-        return "youtube", clean_url
-
-    # TikTok: limpiar parámetros
-    if "tiktok.com" in url:
-        clean_url = url.split("?")[0]
-        return "tiktok", clean_url
-
-    return "otro", url
-
-# ==========================================
 # MOTORES DE DESCARGA
 # ==========================================
 
-# 1. TIKTOK (INTACTO - NO TOCAR)
+# 1. TIKTOK (Intacto con su API directa rápida)
 def descargar_tiktok(url):
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -155,66 +125,7 @@ def descargar_tiktok(url):
         print(f"Error TikTok: {e}")
     return None
 
-# 2. INSTAGRAM (Ajuste específico con headers móviles y bypass de CDN)
-def descargar_instagram(url):
-    os.makedirs("descargas", exist_ok=True)
-    out_pattern = f"descargas/ig_{os.urandom(4).hex()}.%(ext)s"
-
-    # Intento 1: Pasarela de proxy de descarga directa (evita la IP de Railway)
-    try:
-        proxy_url = f"https://api.ryzendesu.vip/api/downloader/igdl?url={url}"
-        headers_nav = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0"}
-        r = requests.get(proxy_url, headers=headers_nav, timeout=12).json()
-        direct_url = None
-        if isinstance(r, list) and len(r) > 0:
-            direct_url = r[0].get("url")
-        elif isinstance(r, dict):
-            items = r.get("data", [])
-            if items:
-                direct_url = items[0].get("url")
-
-        if direct_url:
-            file_path = f"descargas/ig_{os.urandom(4).hex()}.mp4"
-            with requests.get(direct_url, headers=headers_nav, stream=True, timeout=45) as req:
-                req.raise_for_status()
-                with open(file_path, "wb") as f:
-                    for chunk in req.iter_content(chunk_size=1024*1024):
-                        if chunk:
-                            f.write(chunk)
-            if os.path.exists(file_path) and os.path.getsize(file_path) > 100 * 1024:
-                return file_path
-    except Exception:
-        pass
-
-    # Intento 2: yt-dlp con headers móviles precisos para Instagram
-    ydl_opts = {
-        'format': 'best[ext=mp4]/best',
-        'outtmpl': out_pattern,
-        'quiet': True,
-        'no_warnings': True,
-        'max_filesize': 48 * 1024 * 1024,
-        'socket_timeout': 25,
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5'
-        }
-    }
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info)
-            base, _ = os.path.splitext(filename)
-            mp4_name = base + ".mp4"
-            if os.path.exists(mp4_name):
-                return mp4_name
-            return filename
-    except Exception as e:
-        print(f"Error yt-dlp IG: {e}")
-
-    return None
-
-# 3. YOUTUBE (INTACTO - NO TOCAR)
+# 2. YOUTUBE (Intacto con API directa y extractor móvil)
 def descargar_youtube(url):
     try:
         r = requests.post(
@@ -267,9 +178,30 @@ def descargar_youtube(url):
                 return mp4_name
             return filename
     except Exception as e:
-        print(f"Error yt-dlp YouTube: {e}")
+        print(f"Error YouTube: {e}")
 
     return None
+
+# 3. MOTOR YT-DLP UNIVERSAL (La configuración exacta previa que descargaba Instagram)
+def descargar_ytdlp(url):
+    os.makedirs("descargas", exist_ok=True)
+    out_pattern = f"descargas/dl_{os.urandom(4).hex()}.%(ext)s"
+    ydl_opts = {
+        'format': 'best[ext=mp4]/best',
+        'outtmpl': out_pattern,
+        'quiet': True,
+        'no_warnings': True,
+        'max_filesize': 48 * 1024 * 1024,
+        'socket_timeout': 30
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        filename = ydl.prepare_filename(info)
+        base, _ = os.path.splitext(filename)
+        mp4_name = base + ".mp4"
+        if os.path.exists(mp4_name):
+            return mp4_name
+        return filename
 
 # ==========================================
 # MANEJADOR DE MENSAJES Y COMANDOS
@@ -319,6 +251,7 @@ def dar_vip_comando(message):
 @bot.message_handler(func=lambda msg: msg.text and ("http://" in msg.text or "https://" in msg.text))
 def recibir_enlace(message):
     user_id = message.from_user.id
+    url_original = message.text.strip()
 
     if not esta_suscrito(user_id):
         markup = types.InlineKeyboardMarkup()
@@ -342,24 +275,30 @@ def recibir_enlace(message):
         bot.reply_to(message, texto_bloqueo, reply_markup=markup, parse_mode="Markdown")
         return
 
-    plataforma, url_limpia = sanitizar_enlace(message.text)
-    if not url_limpia:
-        bot.reply_to(message, "❌ No se detectó un enlace válido.")
-        return
+    # Limpieza de URL: aislar el link limpio sin tokens de rastreo
+    url = url_original
+    if "instagram.com" in url or "instagr.am" in url:
+        ig_match = re.search(r'(https?://(?:www\.)?instagram\.com/(?:reel|p|tv)/[a-zA-Z0-9_-]+)', url)
+        if ig_match:
+            url = ig_match.group(1) + "/"
+        elif "?" in url:
+            url = url.split("?")[0]
+    elif "?" in url:
+        url = url.split("?")[0]
 
     msg_espera = bot.reply_to(message, "⏳ *Descargando video...*", parse_mode="Markdown")
     os.makedirs("descargas", exist_ok=True)
     archivo = None
 
     try:
-        if plataforma == "tiktok":
-            archivo = descargar_tiktok(url_limpia)
-        elif plataforma == "instagram":
-            archivo = descargar_instagram(url_limpia)
-        elif plataforma == "youtube":
-            archivo = descargar_youtube(url_limpia)
+        # Enrutamiento idéntico al original:
+        if "tiktok.com" in url:
+            archivo = descargar_tiktok(url)
+        elif "youtube.com" in url or "youtu.be" in url:
+            archivo = descargar_youtube(url)
         else:
-            archivo = descargar_youtube(url_limpia)
+            # Instagram y demás entran directo a descargar_ytdlp tal como estaba configurado a las 3:41 AM
+            archivo = descargar_ytdlp(url)
 
         if archivo and os.path.exists(archivo):
             bot.edit_message_text("📤 *Enviando video...*", chat_id=message.chat.id, message_id=msg_espera.message_id, parse_mode="Markdown")
