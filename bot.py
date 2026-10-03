@@ -106,13 +106,11 @@ def sanitizar_enlace(texto):
     
     url = url_match.group(1).strip()
     
-    # Extraer ID limpio de Instagram (Reels, Posts, TV)
     ig_match = re.search(r'(?:instagram\.com|instagr\.am)/(?:reel|p|tv)/([a-zA-Z0-9_-]+)', url)
     if ig_match:
         clean_url = f"https://www.instagram.com/reel/{ig_match.group(1)}/"
         return "instagram", clean_url
 
-    # Normalizar YouTube / Shorts
     yt_match = re.search(r'(?:youtube\.com/shorts/|youtu\.be/|youtube\.com/watch\?v=)([a-zA-Z0-9_-]{11})', url)
     if yt_match:
         clean_url = f"https://www.youtube.com/watch?v={yt_match.group(1)}"
@@ -154,53 +152,60 @@ def descargar_tiktok(url):
         print(f"Error TikTok: {e}")
     return None
 
-# 2. INSTAGRAM (Motor directo por pasarela SnapSave/FastDL)
+# 2. INSTAGRAM (GraphQL directo + Pasarela API optimizada sin timeout)
 def descargar_instagram(url):
     video_url = None
-    headers_common = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-        "Referer": "https://snapinsta.app/"
-    }
+    
+    # Extraer código corto del Reel (ej: Dd5J0bgtS4Z)
+    match_code = re.search(r'/(?:reel|p|tv)/([a-zA-Z0-9_-]+)', url)
+    shortcode = match_code.group(1) if match_code else None
 
-    # Intento 1: API SnapInsta / SaveIG
-    try:
-        data_payload = {"url": url, "action": "post"}
-        r = requests.post("https://snapinsta.app/action.php", data=data_payload, headers=headers_common, timeout=12)
-        if r.status_code == 200:
-            html = r.text
-            match = re.search(r'href="([^"]+)"[^>]*download', html)
-            if not match:
-                match = re.search(r'(https://[^"]+fbcdn\.net/[^"]+)', html)
-            if match:
-                video_url = match.group(1).replace("&amp;", "&")
-    except Exception:
-        pass
-
-    # Intento 2: Pasarela directa de metadatos abiertos
-    if not video_url:
+    # Método A: Instagram GraphQL JSON directo (Sin cookies, emulando navegador web con X-IG-App-ID)
+    if shortcode:
         try:
-            api_ep = f"https://api.ryzendesu.vip/api/downloader/igdl?url={url}"
-            r2 = requests.get(api_ep, headers=headers_common, timeout=12).json()
-            if isinstance(r2, list) and len(r2) > 0:
-                video_url = r2[0].get("url")
-            elif isinstance(r2, dict):
-                arr = r2.get("data", [])
-                if arr:
-                    video_url = arr[0].get("url")
+            gql_url = f"https://www.instagram.com/graphql/query/?query_hash=b3055c01b4b222b8a47dc12b090e4e64&variables=%7B%22shortcode%22:%22{shortcode}%22%7D"
+            gql_headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+                "X-IG-App-ID": "936619743392459",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept": "*/*"
+            }
+            res_gql = requests.get(gql_url, headers=gql_headers, timeout=8).json()
+            media = res_gql.get("data", {}).get("shortcode_media", {})
+            if media.get("is_video"):
+                video_url = media.get("video_url")
         except Exception:
             pass
 
-    # Intento 3: Instancia Cobalt dedicada
+    # Método B: Instancia proxy rápida SaveIG
     if not video_url:
         try:
-            r_cobalt = requests.post(
-                "https://api.cobalt.tools",
-                json={"url": url},
-                headers={"Accept": "application/json", "Content-Type": "application/json"},
-                timeout=12
-            )
-            if r_cobalt.status_code == 200:
-                video_url = r_cobalt.json().get("url")
+            api_post = "https://v3.igdownloader.app/api/ajaxSearch"
+            h_ig = {
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                "X-Requested-With": "XMLHttpRequest"
+            }
+            r_post = requests.post(api_post, data={"q": url, "t": "media", "lang": "en"}, headers=h_ig, timeout=8)
+            if r_post.status_code == 200:
+                html = r_post.json().get("data", "")
+                found = re.findall(r'href="(https://[^"]+fbcdn\.net/[^"]+)"', html)
+                if not found:
+                    found = re.findall(r'href="([^"]+)"[^>]*download', html)
+                if found:
+                    video_url = found[0].replace("&amp;", "&")
+        except Exception:
+            pass
+
+    # Método C: API de terceros pública
+    if not video_url:
+        try:
+            r_api = requests.get(f"https://api.vkrdownloader.com/v1/get?url={url}", timeout=8).json()
+            downloads = r_api.get("data", {}).get("downloads", [])
+            for d in downloads:
+                if "video" in str(d.get("format", "")).lower() or d.get("format_id") in ["mp4", "video"]:
+                    video_url = d.get("url")
+                    break
         except Exception:
             pass
 
@@ -208,7 +213,8 @@ def descargar_instagram(url):
         try:
             os.makedirs("descargas", exist_ok=True)
             file_path = f"descargas/ig_{os.urandom(4).hex()}.mp4"
-            with requests.get(video_url, headers={"User-Agent": headers_common["User-Agent"]}, stream=True, timeout=50) as req:
+            headers_dl = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+            with requests.get(video_url, headers=headers_dl, stream=True, timeout=40) as req:
                 req.raise_for_status()
                 with open(file_path, "wb") as f:
                     for chunk in req.iter_content(chunk_size=1024*1024):
@@ -219,7 +225,7 @@ def descargar_instagram(url):
             elif os.path.exists(file_path):
                 os.remove(file_path)
         except Exception as e:
-            print(f"Error descargando archivo IG: {e}")
+            print(f"Error guardando video IG: {e}")
 
     return None
 
@@ -332,7 +338,7 @@ def recibir_enlace(message):
     if not esta_suscrito(user_id):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("📢 Unirme al Canal", url=CANAL_ENLACE))
-        bot.reply_to(message, "⚠️️ Para descargar videos gratis, primero únete a nuestro canal:", reply_markup=markup)
+        bot.reply_to(message, "⚠️ Para descargar videos gratis, primero únete a nuestro canal:", reply_markup=markup)
         return
 
     puede_descargar, tipo_usuario, info = verificar_estado_usuario(user_id)
