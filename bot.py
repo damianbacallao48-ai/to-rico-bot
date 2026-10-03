@@ -1,10 +1,11 @@
 import os
+import glob
 import re
 import sqlite3
 import threading
 from datetime import datetime, timedelta
 import requests
-import yt_dlp
+import instaloader
 from flask import Flask
 from telebot import TeleBot, types
 
@@ -22,6 +23,18 @@ bot = TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
 CACHE_ENLACES = {}
+
+# Inicializar Instaloader
+L = instaloader.Instaloader(
+    download_pictures=False,
+    download_videos=True,
+    download_video_thumbnails=False,
+    download_geotags=False,
+    download_comments=False,
+    save_metadata=False,
+    compress_json=False,
+    quiet=True
+)
 
 @app.route('/')
 def home():
@@ -97,21 +110,18 @@ def esta_suscrito(user_id):
     except Exception:
         return True
 
-# ==========================================
-# UTILIDAD DE DESCARGA LOCAL
-# ==========================================
-def bajar_archivo(url_remota, ruta_local):
+def bajar_archivo(url, destino):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    with requests.get(url_remota, headers=headers, stream=True, timeout=50) as req:
+    with requests.get(url, headers=headers, stream=True, timeout=50) as req:
         req.raise_for_status()
-        with open(ruta_local, "wb") as f:
+        with open(destino, "wb") as f:
             for chunk in req.iter_content(chunk_size=1024*1024):
                 if chunk:
                     f.write(chunk)
-    return os.path.exists(ruta_local) and os.path.getsize(ruta_local) > 50 * 1024
+    return os.path.exists(destino) and os.path.getsize(destino) > 50 * 1024
 
 # ==========================================
-# 1. MOTOR TIKTOK (VIDEO Y MP3)
+# 1. MOTOR TIKTOK (TOTALMENTE INTACTO)
 # ==========================================
 def obtener_datos_tiktok(url):
     try:
@@ -126,66 +136,28 @@ def obtener_datos_tiktok(url):
     return None
 
 # ==========================================
-# 2. MOTOR PINTEREST
+# 2. MOTOR INSTAGRAM (VÍA INSTALOADER NATIVO)
 # ==========================================
-def descargar_pinterest(url):
-    try:
-        os.makedirs("descargas", exist_ok=True)
-        out_pattern = f"descargas/pin_{os.urandom(4).hex()}.%(ext)s"
-        ydl_opts = {
-            'format': 'best',
-            'outtmpl': out_pattern,
-            'quiet': True,
-            'no_warnings': True,
-            'max_filesize': 48 * 1024 * 1024
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info)
-            if os.path.exists(filename):
-                return filename
-    except Exception as e:
-        print(f"Error Pinterest: {e}")
-    return None
-
-# =
-# ==========================================
-# 3. MOTOR INSTAGRAM (PASARELA DIRECTA)
-# ==========================================
-def descargar_instagram(url):
+def descargar_instagram_instaloader(url):
     try:
         match = re.search(r'/(?:reel|p|tv)/([a-zA-Z0-9_-]+)', url)
         if not match:
             return None
         shortcode = match.group(1)
-        clean_target = f"https://www.instagram.com/reel/{shortcode}/"
-
-        # Petición a pasarela de extracción externa (fuera de la IP de Railway)
-        api_endpoint = f"https://api.vkrdownloader.com/v1/get?url={clean_target}"
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         
-        r = requests.get(api_endpoint, headers=headers, timeout=15).json()
-        downloads = r.get("data", {}).get("downloads", [])
+        carpeta_destino = f"descargas_{shortcode}"
+        os.makedirs(carpeta_destino, exist_ok=True)
         
-        video_url = None
-        for item in downloads:
-            if "video" in str(item.get("format", "")).lower() or item.get("format_id") in ["mp4", "video"]:
-                video_url = item.get("url")
-                break
-        
-        if not video_url and downloads:
-            video_url = downloads[0].get("url")
-
-        if video_url:
-            os.makedirs("descargas", exist_ok=True)
-            archivo_local = f"descargas/ig_{shortcode}.mp4"
-            if bajar_archivo(video_url, archivo_local):
-                return archivo_local
-
+        # Descarga mediante shortcode directo usando la estructura nativa de Instaloader
+        post = instaloader.Post.from_shortcode(L.context, shortcode)
+        if post.is_video:
+            L.download_post(post, target=carpeta_destino)
+            videos = glob.glob(f"{carpeta_destino}/*.mp4")
+            if videos:
+                return videos[0], carpeta_destino
     except Exception as e:
-        print(f"Error Instagram: {e}")
-    return None
-
+        print(f"Error Instaloader: {e}")
+    return None, None
 
 # ==========================================
 # COMANDOS Y MENSAJES
@@ -198,9 +170,8 @@ def bienvenida(message):
     texto = (
         "⚡ *¡Bienvenido al Descargador Pro!*\n\n"
         "Envía el enlace de cualquier video:\n"
-        "• 🎵 *TikTok* (Video sin marca o Audio MP3)\n"
-        "• 📸 *Instagram Reels y Posts*\n"
-        "• 📌 *Pinterest* (Videos e imágenes HD)\n\n"
+        "• 🎵 *TikTok* (Video HD sin marca o Audio MP3)\n"
+        "• 📸 *Instagram* (Reels y Posts en video)\n\n"
         f"📊 *Tu plan:* `{texto_estado}`\n"
         f"🆔 *Tu ID:* `{user_id}`\n\n"
         "👉 *Pega el enlace aquí abajo:*"
@@ -240,7 +211,7 @@ def recibir_enlace(message):
     if not esta_suscrito(user_id):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("📢 Unirme al Canal", url=CANAL_ENLACE))
-        bot.reply_to(message, "⚠️ Para descargar contenido gratis, primero únete a nuestro canal:", reply_markup=markup)
+        bot.reply_to(message, "⚠️ Para descargar videos gratis, primero únete a nuestro canal:", reply_markup=markup)
         return
 
     puede_descargar, tipo_usuario, _ = verificar_estado_usuario(user_id)
@@ -257,7 +228,7 @@ def recibir_enlace(message):
         bot.reply_to(message, texto_bloqueo, reply_markup=markup, parse_mode="Markdown")
         return
 
-    # CASO 1: TIKTOK (Menú interactivo Video o MP3)
+    # CASO 1: TIKTOK (TOTALMENTE INTACTO)
     if "tiktok.com" in raw_text:
         msg_espera = bot.reply_to(message, "🔍 *Analizando TikTok...*", parse_mode="Markdown")
         datos = obtener_datos_tiktok(raw_text)
@@ -286,14 +257,14 @@ def recibir_enlace(message):
         )
         return
 
-    # CASO 2: INSTAGRAM
+    # CASO 2: INSTAGRAM (VÍA INSTALOADER)
     if "instagram.com" in raw_text or "instagr.am" in raw_text:
         msg_espera = bot.reply_to(message, "⏳ *Descargando de Instagram...*", parse_mode="Markdown")
-        archivo = descargar_instagram(raw_text)
+        archivo_video, carpeta_borrar = descargar_instagram_instaloader(raw_text)
 
-        if archivo and os.path.exists(archivo):
+        if archivo_video and os.path.exists(archivo_video):
             bot.edit_message_text("📤 *Enviando Reel...*", chat_id=message.chat.id, message_id=msg_espera.message_id, parse_mode="Markdown")
-            with open(archivo, 'rb') as f:
+            with open(archivo_video, 'rb') as f:
                 bot.send_video(
                     message.chat.id,
                     f,
@@ -304,47 +275,23 @@ def recibir_enlace(message):
             if tipo_usuario == "free":
                 sumar_descarga(user_id)
             bot.delete_message(message.chat.id, msg_espera.message_id)
+            
+            # Limpieza de archivos temporales
             try:
-                os.remove(archivo)
+                for f_temp in glob.glob(f"{carpeta_borrar}/*"):
+                    os.remove(f_temp)
+                os.rmdir(carpeta_borrar)
             except Exception:
                 pass
         else:
-            bot.edit_message_text("❌ No se pudo descargar este contenido de Instagram. Asegúrate de que la cuenta sea pública.", chat_id=message.chat.id, message_id=msg_espera.message_id)
+            bot.edit_message_text("❌ No se pudo descargar este Reel. Asegúrate de que la cuenta sea pública.", chat_id=message.chat.id, message_id=msg_espera.message_id)
         return
 
-    # CASO 3: PINTEREST
-    if "pinterest.com" in raw_text or "pin.it" in raw_text:
-        msg_espera = bot.reply_to(message, "⏳ *Descargando de Pinterest...*", parse_mode="Markdown")
-        archivo = descargar_pinterest(raw_text)
-
-        if archivo and os.path.exists(archivo):
-            bot.edit_message_text("📤 *Enviando contenido...*", chat_id=message.chat.id, message_id=msg_espera.message_id, parse_mode="Markdown")
-            with open(archivo, 'rb') as f:
-                bot.send_video(
-                    message.chat.id,
-                    f,
-                    supports_streaming=True,
-                    caption="📌 *Video de Pinterest descargado*\n📢 *Canal oficial:* @torico_cuba_db",
-                    parse_mode="Markdown"
-                )
-            if tipo_usuario == "free":
-                sumar_descarga(user_id)
-            bot.delete_message(message.chat.id, msg_espera.message_id)
-            try:
-                os.remove(archivo)
-            except Exception:
-                pass
-        else:
-            bot.edit_message_text("❌ No se pudo descargar este enlace de Pinterest.", chat_id=message.chat.id, message_id=msg_espera.message_id)
-        return
-
-    # CASO 4: OTRAS REDES NO SOPORTADAS
     bot.reply_to(
         message,
         "💡 *Plataformas compatibles actualmente:*\n\n"
         "• 🎵 *TikTok* (Video y MP3)\n"
-        "• 📸 *Instagram Reels y Posts*\n"
-        "• 📌 *Pinterest* (Videos e imágenes)",
+        "• 📸 *Instagram Reels y Posts*",
         parse_mode="Markdown"
     )
 
@@ -416,7 +363,6 @@ def procesar_seleccion_tiktok(call):
                 pass
 
 if __name__ == "__main__":
-    print("Iniciando bot con TikTok, Pinterest e Instagram...")
+    print("Iniciando bot con TikTok e Instagram nativo...")
     threading.Thread(target=iniciar_servidor_web, daemon=True).start()
     bot.infinity_polling(timeout=20, long_polling_timeout=20)
-
