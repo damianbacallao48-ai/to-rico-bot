@@ -25,7 +25,7 @@ def iniciar_servidor_web():
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
 
-# --- BASE DE DATOS LOCAL ---
+# --- BASE DE DATOS ---
 conn = sqlite3.connect("usuarios.db", check_same_thread=False)
 cursor = conn.cursor()
 cursor.execute('''
@@ -52,7 +52,6 @@ def verificar_estado_usuario(user_id):
 
     descargas, vip_hasta_str = res
 
-    # Comprobar VIP
     if vip_hasta_str:
         try:
             vip_hasta = datetime.strptime(vip_hasta_str, "%Y-%m-%d %H:%M:%S")
@@ -62,7 +61,6 @@ def verificar_estado_usuario(user_id):
         except Exception:
             pass
 
-    # Comprobar descargas gratis
     if descargas < LIMITE_GRATIS:
         return True, "free", f"Gratis ({descargas}/{LIMITE_GRATIS} usadas)"
 
@@ -100,80 +98,59 @@ def descargar_tiktok_api(url):
         r = requests.get(api_url, headers=headers, timeout=15).json()
         if r.get("code") == 0:
             data = r.get("data", {})
-            video_url = data.get("play")
-            if not video_url or not data.get("duration"):
-                video_url = data.get("wmplay")
-            
+            video_url = data.get("play") or data.get("wmplay")
             if video_url:
                 os.makedirs("descargas", exist_ok=True)
-                file_path = f"descargas/vid_{data.get('id', 'temp')}.mp4"
+                file_path = f"descargas/tik_{data.get('id', 'temp')}.mp4"
                 with requests.get(video_url, headers=headers, stream=True, timeout=45) as req:
                     req.raise_for_status()
                     with open(file_path, "wb") as f:
                         for chunk in req.iter_content(chunk_size=1024*1024):
                             if chunk:
                                 f.write(chunk)
-                if os.path.exists(file_path) and os.path.getsize(file_path) > 800 * 1024:
+                if os.path.exists(file_path) and os.path.getsize(file_path) > 500 * 1024:
                     return file_path
                 elif os.path.exists(file_path):
                     os.remove(file_path)
     except Exception as e:
-        print(f"Error TikTok API: {e}")
+        print(f"Error TikTok: {e}")
     return None
 
-def descargar_api_universal(url):
-    """Descarga de forma directa Instagram y YouTube sin requerir ffmpeg ni credenciales."""
-    try:
-        api_endpoint = "https://api.cobalt.tools"
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "url": url,
-            "videoQuality": "720"
-        }
-        res = requests.post(api_endpoint, json=payload, headers=headers, timeout=20)
-        
-        if res.status_code == 200:
-            data = res.json()
-            video_url = data.get("url")
-            if video_url:
-                os.makedirs("descargas", exist_ok=True)
-                file_path = f"descargas/vid_{os.urandom(4).hex()}.mp4"
-                with requests.get(video_url, stream=True, timeout=60) as r:
-                    r.raise_for_status()
-                    with open(file_path, "wb") as f:
-                        for chunk in r.iter_content(chunk_size=1024*1024):
-                            if chunk:
-                                f.write(chunk)
-                if os.path.exists(file_path) and os.path.getsize(file_path) > 100 * 1024:
-                    return file_path
-                elif os.path.exists(file_path):
-                    os.remove(file_path)
-    except Exception as e:
-        print(f"Error API universal: {e}")
-    return None
-
-def descargar_ytdlp(url):
+def descargar_media_ytdlp(url):
     os.makedirs("descargas", exist_ok=True)
-    # Formato progresivo único: evita exigir mezclas con ffmpeg
+    out_pattern = f"descargas/vid_{os.urandom(4).hex()}.%(ext)s"
+
+    # Configuración anti-bloqueo y compatible con Telegram (límite 48MB)
     ydl_opts = {
-        'format': 'best[ext=mp4]/best',
-        'outtmpl': 'descargas/%(id)s.%(ext)s',
+        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        'outtmpl': out_pattern,
+        'merge_output_format': 'mp4',
         'quiet': True,
         'no_warnings': True,
         'max_filesize': 48 * 1024 * 1024,
         'socket_timeout': 30,
+        # Hace que YouTube crea que la petición viene de un móvil Android real
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web']
+            }
+        },
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+            'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip'
         }
     }
+
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
-        return ydl.prepare_filename(info)
+        filename = ydl.prepare_filename(info)
+        # Si fue combinado a mp4
+        base_name, _ = os.path.splitext(filename)
+        mp4_name = base_name + ".mp4"
+        if os.path.exists(mp4_name):
+            return mp4_name
+        return filename
 
-# --- COMANDOS Y MENSAJES ---
+# --- COMANDOS ---
 
 @bot.message_handler(commands=['start'])
 def bienvenida(message):
@@ -183,7 +160,7 @@ def bienvenida(message):
         "⚡ *¡Bienvenido al Descargador Rápido!*\n\n"
         "Envía el enlace de cualquier video:\n"
         "• TikTok (sin marca de agua)\n"
-        "• Instagram Reels y Videos\n"
+        "• Instagram Reels\n"
         "• YouTube Shorts y Videos\n\n"
         f"📊 *Tu plan:* {texto_estado}\n"
         f"🆔 *Tu ID:* `{user_id}`\n\n"
@@ -223,7 +200,7 @@ def recibir_enlace(message):
     url = message.text.strip()
 
     # Limpiar parámetros de tracking (?si=..., ?igsh=...)
-    if "?" in url and ("instagram.com" in url or "tiktok.com" in url or "youtu.be" in url or "youtube.com/shorts" in url):
+    if "?" in url:
         url = url.split("?")[0]
 
     if not esta_suscrito(user_id):
@@ -240,10 +217,10 @@ def recibir_enlace(message):
         texto_bloqueo = (
             "❌ *Has alcanzado el límite de 2 descargas gratuitas.*\n\n"
             "🌟 *Pase VIP (15 días de acceso ilimitado):*\n"
-            "• Descargas sin ningún tipo de límite.\n"
+            "• Descargas sin límite.\n"
             "• Máxima velocidad de entrega.\n\n"
             f"🆔 *Tu ID para activación:* `{user_id}`\n\n"
-            "Toca el botón de abajo para ponerte en contacto y activar tu suscripción."
+            "Toca el botón de abajo para activar tu suscripción."
         )
         bot.reply_to(message, texto_bloqueo, reply_markup=markup, parse_mode="Markdown")
         return
@@ -253,17 +230,11 @@ def recibir_enlace(message):
     archivo = None
 
     try:
-        # 1. Probar TikTok primero
         if "tiktok.com" in url:
             archivo = descargar_tiktok_api(url)
             
-        # 2. Instagram o YouTube por API directa
-        elif "instagram.com" in url or "youtube.com" in url or "youtu.be" in url:
-            archivo = descargar_api_universal(url)
-
-        # 3. Respaldo general con yt_dlp
         if not archivo or not os.path.exists(archivo):
-            archivo = descargar_ytdlp(url)
+            archivo = descargar_media_ytdlp(url)
 
         if archivo and os.path.exists(archivo):
             bot.edit_message_text("📤 *Enviando video...*", chat_id=message.chat.id, message_id=msg_espera.message_id, parse_mode="Markdown")
