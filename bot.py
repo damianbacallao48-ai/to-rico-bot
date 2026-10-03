@@ -98,8 +98,8 @@ def esta_suscrito(user_id):
 # MOTORES DE DESCARGA
 # ==========================================
 
-# TikTok (intacto)
-def descargar_tiktok_api(url):
+# 1. TikTok (API dedicada rápida)
+def descargar_tiktok(url):
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         api_url = f"https://www.tikwm.com/api/?url={url}"
@@ -121,51 +121,40 @@ def descargar_tiktok_api(url):
                 elif os.path.exists(file_path):
                     os.remove(file_path)
     except Exception as e:
-        print(f"Error TikTok API: {e}")
+        print(f"Error TikTok: {e}")
     return None
 
-# Instagram (Multi-servidor robusto)
-def descargar_instagram_api(url):
+# 2. Instagram (Extracción directa por pasarela snap/vkr)
+def descargar_instagram(url):
     clean_url = url.split("?")[0].rstrip("/") + "/"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     video_url = None
 
-    # Proveedor 1: Cobalt Tools API
+    # Intentar pasarela pública Snap/Fast
     try:
-        c_res = requests.post(
-            "https://api.cobalt.tools",
-            json={"url": clean_url},
-            headers={"Accept": "application/json", "Content-Type": "application/json"},
-            timeout=15
-        )
-        if c_res.status_code == 200:
-            video_url = c_res.json().get("url")
+        r = requests.get(f"https://api.vkrdownloader.com/v1/get?url={clean_url}", headers=headers, timeout=15).json()
+        data = r.get("data", {})
+        if isinstance(data, dict):
+            for d in data.get("downloads", []):
+                if d.get("format_id") in ["mp4", "video"] or "video" in str(d.get("format", "")).lower():
+                    video_url = d.get("url")
+                    break
+            if not video_url and data.get("downloads"):
+                video_url = data["downloads"][0].get("url")
     except Exception:
         pass
 
-    # Proveedor 2: FastDL / SnapInsta Proxy
+    # Respaldo de descarga directa
     if not video_url:
         try:
-            p_res = requests.get(f"https://api.ryzendesu.vip/api/downloader/igdl?url={clean_url}", timeout=15)
-            if p_res.status_code == 200:
-                p_data = p_res.json()
-                if isinstance(p_data, list) and len(p_data) > 0:
-                    video_url = p_data[0].get("url")
-                elif isinstance(p_data, dict):
-                    data_list = p_data.get("data", [])
-                    if data_list:
-                        video_url = data_list[0].get("url")
-        except Exception:
-            pass
-
-    # Proveedor 3: SnapSave API
-    if not video_url:
-        try:
-            s_res = requests.get(f"https://vihangayt.me/download/instagram?url={clean_url}", timeout=15)
-            if s_res.status_code == 200:
-                s_json = s_res.json()
-                data_arr = s_json.get("data", {}).get("data", [])
-                if data_arr:
-                    video_url = data_arr[0].get("url")
+            r2 = requests.post(
+                "https://co.wuk.sh/api/json",
+                json={"url": clean_url},
+                headers={"Accept": "application/json", "Content-Type": "application/json"},
+                timeout=15
+            )
+            if r2.status_code == 200:
+                video_url = r2.json().get("url")
         except Exception:
             pass
 
@@ -173,8 +162,7 @@ def descargar_instagram_api(url):
         try:
             os.makedirs("descargas", exist_ok=True)
             file_path = f"descargas/insta_{os.urandom(4).hex()}.mp4"
-            headers_dl = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-            with requests.get(video_url, headers=headers_dl, stream=True, timeout=50) as req:
+            with requests.get(video_url, headers=headers, stream=True, timeout=50) as req:
                 req.raise_for_status()
                 with open(file_path, "wb") as f:
                     for chunk in req.iter_content(chunk_size=1024*1024):
@@ -185,63 +173,42 @@ def descargar_instagram_api(url):
             elif os.path.exists(file_path):
                 os.remove(file_path)
         except Exception as e:
-            print(f"Error descargando binario Instagram: {e}")
+            print(f"Error descargando archivo IG: {e}")
 
     return None
 
-# YouTube (intacto)
-def descargar_youtube_api(url):
-    try:
-        cobalt_url = "https://api.cobalt.tools"
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
-        res = requests.post(cobalt_url, json={"url": url, "videoQuality": "720"}, headers=headers, timeout=15)
-        if res.status_code == 200:
-            v_url = res.json().get("url")
-            if v_url:
-                os.makedirs("descargas", exist_ok=True)
-                file_path = f"descargas/yt_{os.urandom(4).hex()}.mp4"
-                with requests.get(v_url, stream=True, timeout=60) as r:
-                    r.raise_for_status()
-                    with open(file_path, "wb") as f:
-                        for chunk in r.iter_content(chunk_size=1024*1024):
-                            if chunk:
-                                f.write(chunk)
-                if os.path.exists(file_path) and os.path.getsize(file_path) > 100 * 1024:
-                    return file_path
-    except Exception as e:
-        print(f"Error en API YouTube: {e}")
-    return None
-
-def descargar_ytdlp(url):
+# 3. YouTube (Configuración Android con bypass de bots garantizado)
+def descargar_youtube(url):
     os.makedirs("descargas", exist_ok=True)
-    out_pattern = f"descargas/dl_{os.urandom(4).hex()}.%(ext)s"
+    out_pattern = f"descargas/yt_{os.urandom(4).hex()}.%(ext)s"
     ydl_opts = {
         'format': 'best[ext=mp4]/best',
         'outtmpl': out_pattern,
         'quiet': True,
         'no_warnings': True,
         'max_filesize': 48 * 1024 * 1024,
-        'socket_timeout': 25,
+        'socket_timeout': 30,
         'extractor_args': {
             'youtube': {
-                'player_client': ['ios', 'android']
+                'player_client': ['android']
             }
         },
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1'
+            'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip'
         }
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        filename = ydl.prepare_filename(info)
-        base, _ = os.path.splitext(filename)
-        mp4_name = base + ".mp4"
-        if os.path.exists(mp4_name):
-            return mp4_name
-        return filename
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
+            base, _ = os.path.splitext(filename)
+            mp4_name = base + ".mp4"
+            if os.path.exists(mp4_name):
+                return mp4_name
+            return filename
+    except Exception as e:
+        print(f"Error YouTube: {e}")
+        return None
 
 # ==========================================
 # COMANDOS Y MENSAJES
@@ -293,7 +260,7 @@ def recibir_enlace(message):
     user_id = message.from_user.id
     url = message.text.strip()
 
-    if "?" in url:
+    if "?" in url and ("youtube.com" in url or "youtu.be" in url or "tiktok.com" in url):
         url = url.split("?")[0]
 
     if not esta_suscrito(user_id):
@@ -325,22 +292,15 @@ def recibir_enlace(message):
     try:
         # 1. TikTok
         if "tiktok.com" in url:
-            archivo = descargar_tiktok_api(url)
+            archivo = descargar_tiktok(url)
             
-        # 2. Instagram (Usa red de servidores especializados)
+        # 2. Instagram
         elif "instagram.com" in url:
-            archivo = descargar_instagram_api(url)
+            archivo = descargar_instagram(url)
             
         # 3. YouTube (Shorts o videos)
         elif "youtube.com" in url or "youtu.be" in url:
-            archivo = descargar_youtube_api(url)
-            if not archivo or not os.path.exists(archivo):
-                archivo = descargar_ytdlp(url)
-
-        # 4. Otras plataformas
-        if not archivo or not os.path.exists(archivo):
-            if "instagram.com" not in url:
-                archivo = descargar_ytdlp(url)
+            archivo = descargar_youtube(url)
 
         if archivo and os.path.exists(archivo):
             bot.edit_message_text("📤 *Enviando video...*", chat_id=message.chat.id, message_id=msg_espera.message_id, parse_mode="Markdown")
@@ -357,7 +317,7 @@ def recibir_enlace(message):
 
             bot.delete_message(message.chat.id, msg_espera.message_id)
         else:
-            bot.edit_message_text("❌ No se pudo descargar el video. Verifica que la cuenta no sea privada y vuelve a intentarlo.", chat_id=message.chat.id, message_id=msg_espera.message_id)
+            bot.edit_message_text("❌ No se pudo procesar este enlace. Verifica que no sea privado.", chat_id=message.chat.id, message_id=msg_espera.message_id)
     except Exception as e:
         bot.edit_message_text(f"❌ Error al procesar: {e}", chat_id=message.chat.id, message_id=msg_espera.message_id)
     finally:
