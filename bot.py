@@ -106,19 +106,19 @@ def sanitizar_enlace(texto):
     
     url = url_match.group(1).strip()
     
-    # Instagram: extraer solo el código limpio
+    # Instagram: aislar el código limpio del reel/post
     ig_match = re.search(r'(?:instagram\.com|instagr\.am)/(?:reel|p|tv)/([a-zA-Z0-9_-]+)', url)
     if ig_match:
         clean_url = f"https://www.instagram.com/reel/{ig_match.group(1)}/"
         return "instagram", clean_url
 
-    # YouTube: extraer ID limpio de 11 caracteres
+    # YouTube: extraer ID limpio
     yt_match = re.search(r'(?:youtube\.com/shorts/|youtu\.be/|youtube\.com/watch\?v=)([a-zA-Z0-9_-]{11})', url)
     if yt_match:
         clean_url = f"https://www.youtube.com/watch?v={yt_match.group(1)}"
         return "youtube", clean_url
 
-    # TikTok: quitar parámetros
+    # TikTok: limpiar parámetros
     if "tiktok.com" in url:
         clean_url = url.split("?")[0]
         return "tiktok", clean_url
@@ -129,7 +129,7 @@ def sanitizar_enlace(texto):
 # MOTORES DE DESCARGA
 # ==========================================
 
-# 1. TIKTOK (INTACTO - NO TOCADO)
+# 1. TIKTOK (INTACTO - NO TOCAR)
 def descargar_tiktok(url):
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -155,17 +155,50 @@ def descargar_tiktok(url):
         print(f"Error TikTok: {e}")
     return None
 
-# 2. INSTAGRAM (Restaurado a yt-dlp directo sin requerir ffmpeg ni APIs externas caídas)
+# 2. INSTAGRAM (Ajuste específico con headers móviles y bypass de CDN)
 def descargar_instagram(url):
     os.makedirs("descargas", exist_ok=True)
     out_pattern = f"descargas/ig_{os.urandom(4).hex()}.%(ext)s"
+
+    # Intento 1: Pasarela de proxy de descarga directa (evita la IP de Railway)
+    try:
+        proxy_url = f"https://api.ryzendesu.vip/api/downloader/igdl?url={url}"
+        headers_nav = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0"}
+        r = requests.get(proxy_url, headers=headers_nav, timeout=12).json()
+        direct_url = None
+        if isinstance(r, list) and len(r) > 0:
+            direct_url = r[0].get("url")
+        elif isinstance(r, dict):
+            items = r.get("data", [])
+            if items:
+                direct_url = items[0].get("url")
+
+        if direct_url:
+            file_path = f"descargas/ig_{os.urandom(4).hex()}.mp4"
+            with requests.get(direct_url, headers=headers_nav, stream=True, timeout=45) as req:
+                req.raise_for_status()
+                with open(file_path, "wb") as f:
+                    for chunk in req.iter_content(chunk_size=1024*1024):
+                        if chunk:
+                            f.write(chunk)
+            if os.path.exists(file_path) and os.path.getsize(file_path) > 100 * 1024:
+                return file_path
+    except Exception:
+        pass
+
+    # Intento 2: yt-dlp con headers móviles precisos para Instagram
     ydl_opts = {
         'format': 'best[ext=mp4]/best',
         'outtmpl': out_pattern,
         'quiet': True,
         'no_warnings': True,
         'max_filesize': 48 * 1024 * 1024,
-        'socket_timeout': 30
+        'socket_timeout': 25,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5'
+        }
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -177,10 +210,11 @@ def descargar_instagram(url):
                 return mp4_name
             return filename
     except Exception as e:
-        print(f"Error yt-dlp Instagram: {e}")
-        return None
+        print(f"Error yt-dlp IG: {e}")
 
-# 3. YOUTUBE (INTACTO - NO TOCADO: El que funcionó al 100%)
+    return None
+
+# 3. YOUTUBE (INTACTO - NO TOCAR)
 def descargar_youtube(url):
     try:
         r = requests.post(
