@@ -99,7 +99,7 @@ def esta_suscrito(user_id):
 # MOTORES DE DESCARGA
 # ==========================================
 
-# 1. TIKTOK (INTACTO - NO TOCAR)
+# 1. TIKTOK (100% OPERATIVO)
 def descargar_tiktok(url):
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -125,7 +125,44 @@ def descargar_tiktok(url):
         print(f"Error TikTok: {e}")
     return None
 
-# 2. INSTAGRAM (Extractor directo por API CDN sin bloqueo de IP)
+# 2. YOUTUBE (RESTAURADO: 100% yt-dlp con cliente móvil nativo, sin APIs externas)
+def descargar_youtube(url):
+    # Limpiar enlace de parámetros raros
+    yt_match = re.search(r'(?:youtube\.com/shorts/|youtu\.be/|youtube\.com/watch\?v=)([a-zA-Z0-9_-]{11})', url)
+    clean_url = f"https://www.youtube.com/watch?v={yt_match.group(1)}" if yt_match else url.split("?")[0]
+
+    os.makedirs("descargas", exist_ok=True)
+    out_pattern = f"descargas/yt_{os.urandom(4).hex()}.%(ext)s"
+    ydl_opts = {
+        'format': 'best[ext=mp4]/best',
+        'outtmpl': out_pattern,
+        'quiet': True,
+        'no_warnings': True,
+        'max_filesize': 48 * 1024 * 1024,
+        'socket_timeout': 35,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'ios']
+            }
+        },
+        'http_headers': {
+            'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip'
+        }
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(clean_url, download=True)
+            filename = ydl.prepare_filename(info)
+            base, _ = os.path.splitext(filename)
+            mp4_name = base + ".mp4"
+            if os.path.exists(mp4_name):
+                return mp4_name
+            return filename
+    except Exception as e:
+        print(f"Error YouTube: {e}")
+    return None
+
+# 3. INSTAGRAM (Aislado completamente: API limpia sin tocar YouTube ni TikTok)
 def descargar_instagram(url):
     match = re.search(r'/(?:reel|p|tv)/([a-zA-Z0-9_-]+)', url)
     if not match:
@@ -134,57 +171,24 @@ def descargar_instagram(url):
     clean_target = f"https://www.instagram.com/reel/{shortcode}/"
 
     video_url = None
-    headers_nav = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    }
+    headers_nav = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0"}
 
-    # Opción 1: API directa de extracción CDN SaveIG / Snapinsta
+    # Vía A: API rápida de CDN
     try:
-        r_api = requests.post(
-            "https://v3.saveig.app/api/ajaxSearch",
-            data={"q": clean_target, "t": "media", "lang": "en"},
-            headers={
-                "User-Agent": headers_nav["User-Agent"],
-                "X-Requested-With": "XMLHttpRequest",
-                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
-            },
-            timeout=12
-        ).json()
-        html_res = r_api.get("data", "")
-        # Extraer URL directa del video en formato MP4
-        v_match = re.search(r'href="([^"]+)"[^>]*class="[^"]*download-items[^"]*"', html_res)
-        if not v_match:
-            v_match = re.search(r'href="([^"]+)"[^>]*download', html_res)
-        if v_match:
-            video_url = v_match.group(1).replace("&amp;", "&")
+        r = requests.get(f"https://api.vkrdownloader.com/v1/get?url={clean_target}", timeout=10).json()
+        downloads = r.get("data", {}).get("downloads", [])
+        for item in downloads:
+            if "video" in str(item.get("format", "")).lower() or item.get("format_id") in ["mp4", "video"]:
+                video_url = item.get("url")
+                break
     except Exception:
         pass
 
-    # Opción 2: Pasarela DDInstagram
+    # Vía B: Fallback de extracción de previsualización
     if not video_url:
         try:
-            r_dd = requests.get(
-                f"https://www.ddinstagram.com/reel/{shortcode}/",
-                headers={"User-Agent": "facebookexternalhit/1.1;line-poker/1.0"},
-                timeout=10
-            )
-            v_meta = re.search(r'<meta\s+property="og:video"\s+content="([^"]+)"', r_dd.text)
-            if not v_meta:
-                v_meta = re.search(r'<meta\s+property="og:video:secure_url"\s+content="([^"]+)"', r_dd.text)
-            if v_meta:
-                video_url = v_meta.group(1).replace("&amp;", "&")
-        except Exception:
-            pass
-
-    # Opción 3: API REST SnapVid
-    if not video_url:
-        try:
-            r_snap = requests.get(f"https://api.vkrdownloader.com/v1/get?url={clean_target}", timeout=10).json()
-            downloads = r_snap.get("data", {}).get("downloads", [])
-            for item in downloads:
-                if "video" in str(item.get("format", "")).lower() or item.get("format_id") in ["mp4", "video"]:
-                    video_url = item.get("url")
-                    break
+            r_dd = requests.get(f"https://api.ddinstagram.com/reel/{shortcode}/", timeout=10).json()
+            video_url = r_dd.get("video_url")
         except Exception:
             pass
 
@@ -203,64 +207,7 @@ def descargar_instagram(url):
             elif os.path.exists(file_path):
                 os.remove(file_path)
         except Exception as e:
-            print(f"Error descargando archivo IG: {e}")
-
-    return None
-
-# 3. YOUTUBE (INTACTO - NO TOCAR)
-def descargar_youtube(url):
-    try:
-        r = requests.post(
-            "https://api.cobalt.tools",
-            json={"url": url, "videoQuality": "720"},
-            headers={"Accept": "application/json", "Content-Type": "application/json"},
-            timeout=12
-        )
-        if r.status_code == 200:
-            video_url = r.json().get("url")
-            if video_url:
-                os.makedirs("descargas", exist_ok=True)
-                file_path = f"descargas/yt_{os.urandom(4).hex()}.mp4"
-                with requests.get(video_url, stream=True, timeout=60) as req:
-                    req.raise_for_status()
-                    with open(file_path, "wb") as f:
-                        for chunk in req.iter_content(chunk_size=1024*1024):
-                            if chunk:
-                                f.write(chunk)
-                if os.path.exists(file_path) and os.path.getsize(file_path) > 100 * 1024:
-                    return file_path
-    except Exception:
-        pass
-
-    try:
-        os.makedirs("descargas", exist_ok=True)
-        out_pattern = f"descargas/yt_{os.urandom(4).hex()}.%(ext)s"
-        ydl_opts = {
-            'format': 'best[ext=mp4]/best',
-            'outtmpl': out_pattern,
-            'quiet': True,
-            'no_warnings': True,
-            'max_filesize': 48 * 1024 * 1024,
-            'socket_timeout': 30,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android', 'ios']
-                }
-            },
-            'http_headers': {
-                'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip'
-            }
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info)
-            base, _ = os.path.splitext(filename)
-            mp4_name = base + ".mp4"
-            if os.path.exists(mp4_name):
-                return mp4_name
-            return filename
-    except Exception as e:
-        print(f"Error yt-dlp YouTube: {e}")
+            print(f"Error binario IG: {e}")
 
     return None
 
@@ -341,12 +288,13 @@ def recibir_enlace(message):
     archivo = None
 
     try:
+        # Enrutamiento estricto e independiente
         if "tiktok.com" in raw_text:
             archivo = descargar_tiktok(raw_text.split("?")[0])
-        elif "instagram.com" in raw_text or "instagr.am" in raw_text:
-            archivo = descargar_instagram(raw_text)
         elif "youtube.com" in raw_text or "youtu.be" in raw_text:
             archivo = descargar_youtube(raw_text)
+        elif "instagram.com" in raw_text or "instagr.am" in raw_text:
+            archivo = descargar_instagram(raw_text)
 
         if archivo and os.path.exists(archivo):
             bot.edit_message_text("📤 *Enviando video...*", chat_id=message.chat.id, message_id=msg_espera.message_id, parse_mode="Markdown")
