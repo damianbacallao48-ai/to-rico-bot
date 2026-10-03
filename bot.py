@@ -98,7 +98,7 @@ def esta_suscrito(user_id):
 # MOTORES DE DESCARGA
 # ==========================================
 
-# 1. TikTok (API dedicada rápida)
+# 1. TIKTOK (Intacto, comprobado y funcionando)
 def descargar_tiktok(url):
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -124,44 +124,49 @@ def descargar_tiktok(url):
         print(f"Error TikTok: {e}")
     return None
 
-# 2. Instagram (Extracción directa por pasarela snap/vkr)
+# 2. INSTAGRAM (Instancias de extracción directa sin pedir cookies)
 def descargar_instagram(url):
     clean_url = url.split("?")[0].rstrip("/") + "/"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-    video_url = None
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "application/json"
+    }
 
-    # Intentar pasarela pública Snap/Fast
+    # Proveedor A: Instancia Cobalt dedicada
     try:
-        r = requests.get(f"https://api.vkrdownloader.com/v1/get?url={clean_url}", headers=headers, timeout=15).json()
-        data = r.get("data", {})
-        if isinstance(data, dict):
-            for d in data.get("downloads", []):
-                if d.get("format_id") in ["mp4", "video"] or "video" in str(d.get("format", "")).lower():
-                    video_url = d.get("url")
-                    break
-            if not video_url and data.get("downloads"):
-                video_url = data["downloads"][0].get("url")
+        payload = {"url": clean_url}
+        h_cobalt = {"Accept": "application/json", "Content-Type": "application/json"}
+        r = requests.post("https://api.cobalt.tools", json=payload, headers=h_cobalt, timeout=15)
+        if r.status_code == 200:
+            video_url = r.json().get("url")
+            if video_url:
+                os.makedirs("descargas", exist_ok=True)
+                file_path = f"descargas/ig_{os.urandom(4).hex()}.mp4"
+                with requests.get(video_url, stream=True, timeout=50) as req:
+                    req.raise_for_status()
+                    with open(file_path, "wb") as f:
+                        for chunk in req.iter_content(chunk_size=1024*1024):
+                            if chunk:
+                                f.write(chunk)
+                if os.path.exists(file_path) and os.path.getsize(file_path) > 100 * 1024:
+                    return file_path
     except Exception:
         pass
 
-    # Respaldo de descarga directa
-    if not video_url:
-        try:
-            r2 = requests.post(
-                "https://co.wuk.sh/api/json",
-                json={"url": clean_url},
-                headers={"Accept": "application/json", "Content-Type": "application/json"},
-                timeout=15
-            )
-            if r2.status_code == 200:
-                video_url = r2.json().get("url")
-        except Exception:
-            pass
-
-    if video_url:
-        try:
+    # Proveedor B: API pública Ryzendesu
+    try:
+        r2 = requests.get(f"https://api.ryzendesu.vip/api/downloader/igdl?url={clean_url}", headers=headers, timeout=15).json()
+        video_url = None
+        if isinstance(r2, list) and len(r2) > 0:
+            video_url = r2[0].get("url")
+        elif isinstance(r2, dict):
+            items = r2.get("data", [])
+            if items:
+                video_url = items[0].get("url")
+        
+        if video_url:
             os.makedirs("descargas", exist_ok=True)
-            file_path = f"descargas/insta_{os.urandom(4).hex()}.mp4"
+            file_path = f"descargas/ig_{os.urandom(4).hex()}.mp4"
             with requests.get(video_url, headers=headers, stream=True, timeout=50) as req:
                 req.raise_for_status()
                 with open(file_path, "wb") as f:
@@ -170,36 +175,55 @@ def descargar_instagram(url):
                             f.write(chunk)
             if os.path.exists(file_path) and os.path.getsize(file_path) > 100 * 1024:
                 return file_path
-            elif os.path.exists(file_path):
-                os.remove(file_path)
-        except Exception as e:
-            print(f"Error descargando archivo IG: {e}")
+    except Exception:
+        pass
 
     return None
 
-# 3. YouTube (Configuración Android con bypass de bots garantizado)
+# 3. YOUTUBE (Túnel API para saltar el bloqueo antibot de IP en Railway)
 def descargar_youtube(url):
-    os.makedirs("descargas", exist_ok=True)
-    out_pattern = f"descargas/yt_{os.urandom(4).hex()}.%(ext)s"
-    ydl_opts = {
-        'format': 'best[ext=mp4]/best',
-        'outtmpl': out_pattern,
-        'quiet': True,
-        'no_warnings': True,
-        'max_filesize': 48 * 1024 * 1024,
-        'socket_timeout': 30,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android']
-            }
-        },
-        'http_headers': {
-            'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip'
-        }
-    }
+    clean_url = url.split("?")[0] if "shorts" in url else url
+
+    # Intentar primero por API externa para no chocar con el antibot de Google
     try:
+        payload = {"url": clean_url, "videoQuality": "720"}
+        h_cobalt = {"Accept": "application/json", "Content-Type": "application/json"}
+        r = requests.post("https://api.cobalt.tools", json=payload, headers=h_cobalt, timeout=15)
+        if r.status_code == 200:
+            video_url = r.json().get("url")
+            if video_url:
+                os.makedirs("descargas", exist_ok=True)
+                file_path = f"descargas/yt_{os.urandom(4).hex()}.mp4"
+                with requests.get(video_url, stream=True, timeout=60) as req:
+                    req.raise_for_status()
+                    with open(file_path, "wb") as f:
+                        for chunk in req.iter_content(chunk_size=1024*1024):
+                            if chunk:
+                                f.write(chunk)
+                if os.path.exists(file_path) and os.path.getsize(file_path) > 100 * 1024:
+                    return file_path
+    except Exception:
+        pass
+
+    # Respaldo: yt-dlp con headers y cliente iOS
+    try:
+        os.makedirs("descargas", exist_ok=True)
+        out_pattern = f"descargas/yt_{os.urandom(4).hex()}.%(ext)s"
+        ydl_opts = {
+            'format': 'best[ext=mp4]/best',
+            'outtmpl': out_pattern,
+            'quiet': True,
+            'no_warnings': True,
+            'max_filesize': 48 * 1024 * 1024,
+            'socket_timeout': 25,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['ios', 'android']
+                }
+            }
+        }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+            info = ydl.extract_info(clean_url, download=True)
             filename = ydl.prepare_filename(info)
             base, _ = os.path.splitext(filename)
             mp4_name = base + ".mp4"
@@ -207,8 +231,9 @@ def descargar_youtube(url):
                 return mp4_name
             return filename
     except Exception as e:
-        print(f"Error YouTube: {e}")
-        return None
+        print(f"Error yt-dlp YouTube: {e}")
+
+    return None
 
 # ==========================================
 # COMANDOS Y MENSAJES
@@ -219,7 +244,7 @@ def bienvenida(message):
     user_id = message.from_user.id
     _, _, texto_estado = verificar_estado_usuario(user_id)
     texto = (
-        "⚡ *¡Bienvenido al Descargador Rápido!*\n\n"
+        "⚡ *¡Bienvenido al Descargador Rápido HD!*\n\n"
         "Envía el enlace de cualquier video:\n"
         "• 🎵 *TikTok* (sin marca de agua)\n"
         "• 📸 *Instagram Reels y Videos*\n"
@@ -260,9 +285,6 @@ def recibir_enlace(message):
     user_id = message.from_user.id
     url = message.text.strip()
 
-    if "?" in url and ("youtube.com" in url or "youtu.be" in url or "tiktok.com" in url):
-        url = url.split("?")[0]
-
     if not esta_suscrito(user_id):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("📢 Unirme al Canal", url=CANAL_ENLACE))
@@ -290,26 +312,30 @@ def recibir_enlace(message):
     archivo = None
 
     try:
-        # 1. TikTok
+        # Enrutamiento estricto por plataforma
         if "tiktok.com" in url:
             archivo = descargar_tiktok(url)
-            
-        # 2. Instagram
         elif "instagram.com" in url:
             archivo = descargar_instagram(url)
-            
-        # 3. YouTube (Shorts o videos)
         elif "youtube.com" in url or "youtu.be" in url:
             archivo = descargar_youtube(url)
 
         if archivo and os.path.exists(archivo):
             bot.edit_message_text("📤 *Enviando video...*", chat_id=message.chat.id, message_id=msg_espera.message_id, parse_mode="Markdown")
+            
+            pie_de_video = (
+                "🎬 *Video descargado con éxito*\n\n"
+                "⚡ *Baja videos de TikTok, Reels y Shorts con este bot.*\n"
+                "📢 *Canal oficial:* @torico_cuba_db"
+            )
+            
             with open(archivo, 'rb') as f:
                 bot.send_video(
                     message.chat.id,
                     f,
                     supports_streaming=True,
-                    caption="🎬 Video descargado con éxito\n📢 Canal: @torico_cuba_db"
+                    caption=pie_de_video,
+                    parse_mode="Markdown"
                 )
             
             if tipo_usuario == "free":
@@ -317,7 +343,7 @@ def recibir_enlace(message):
 
             bot.delete_message(message.chat.id, msg_espera.message_id)
         else:
-            bot.edit_message_text("❌ No se pudo procesar este enlace. Verifica que no sea privado.", chat_id=message.chat.id, message_id=msg_espera.message_id)
+            bot.edit_message_text("❌ No se pudo descargar este enlace. Asegúrate de que el contenido sea público y pese menos de 50MB.", chat_id=message.chat.id, message_id=msg_espera.message_id)
     except Exception as e:
         bot.edit_message_text(f"❌ Error al procesar: {e}", chat_id=message.chat.id, message_id=msg_espera.message_id)
     finally:
