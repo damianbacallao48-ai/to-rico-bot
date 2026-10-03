@@ -57,7 +57,6 @@ def verificar_estado_usuario(user_id):
 
     descargas, vip_hasta_str = res
 
-    # Comprobar vigencia del plan VIP
     if vip_hasta_str:
         try:
             vip_hasta = datetime.strptime(vip_hasta_str, "%Y-%m-%d %H:%M:%S")
@@ -67,7 +66,6 @@ def verificar_estado_usuario(user_id):
         except Exception:
             pass
 
-    # Comprobar límite gratuito
     if descargas < LIMITE_GRATIS:
         return True, "free", f"Prueba gratuita ({descargas}/{LIMITE_GRATIS} usadas)"
 
@@ -125,61 +123,83 @@ def descargar_tiktok_api(url):
         print(f"Error TikTok API: {e}")
     return None
 
-def descargar_api_externa(url):
-    """Descarga de respaldo vía API pública para evitar bloqueos antibot de YouTube e Instagram."""
-    apis = [
-        "https://api.cobalt.tools",
-        "https://co.wuk.sh/api/json"
-    ]
-    for endpoint in apis:
-        try:
-            headers = {
-                "Accept": "application/json",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "url": url,
-                "videoQuality": "720",
-                "vQuality": "720"
-            }
-            res = requests.post(endpoint, json=payload, headers=headers, timeout=15)
-            if res.status_code == 200:
-                data = res.json()
-                video_url = data.get("url")
-                if video_url:
-                    os.makedirs("descargas", exist_ok=True)
-                    file_path = f"descargas/vid_{os.urandom(4).hex()}.mp4"
-                    with requests.get(video_url, stream=True, timeout=60) as r:
-                        r.raise_for_status()
-                        with open(file_path, "wb") as f:
-                            for chunk in r.iter_content(chunk_size=1024*1024):
-                                if chunk:
-                                    f.write(chunk)
-                    if os.path.exists(file_path) and os.path.getsize(file_path) > 100 * 1024:
-                        return file_path
-                    elif os.path.exists(file_path):
-                        os.remove(file_path)
-        except Exception:
-            continue
+def descargar_youtube_api(url):
+    """Descarga de YouTube a través de puente API externo para evitar el bloqueo antibot de Railway."""
+    try:
+        api_url = f"https://api.invidious.io/api/v1/videos/"
+        # Opciones de proxies/APIs rotativas directas
+        endpoints = [
+            f"https://yt-api-service.onrender.com/download?url={url}",
+            f"https://pipedapi.kavin.rocks/streams/"
+        ]
+        
+        # Primero intentamos Cobalt con headers de túnel
+        cobalt_url = "https://api.cobalt.tools"
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        }
+        res = requests.post(cobalt_url, json={"url": url, "videoQuality": "720"}, headers=headers, timeout=15)
+        if res.status_code == 200:
+            v_url = res.json().get("url")
+            if v_url:
+                os.makedirs("descargas", exist_ok=True)
+                file_path = f"descargas/yt_{os.urandom(4).hex()}.mp4"
+                with requests.get(v_url, stream=True, timeout=60) as r:
+                    r.raise_for_status()
+                    with open(file_path, "wb") as f:
+                        for chunk in r.iter_content(chunk_size=1024*1024):
+                            if chunk:
+                                f.write(chunk)
+                if os.path.exists(file_path) and os.path.getsize(file_path) > 100 * 1024:
+                    return file_path
+    except Exception as e:
+        print(f"Error en API YouTube: {e}")
+    return None
+
+def descargar_instagram_api(url):
+    try:
+        api_endpoint = "https://api.cobalt.tools"
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+        }
+        res = requests.post(api_endpoint, json={"url": url}, headers=headers, timeout=15)
+        if res.status_code == 200:
+            v_url = res.json().get("url")
+            if v_url:
+                os.makedirs("descargas", exist_ok=True)
+                file_path = f"descargas/insta_{os.urandom(4).hex()}.mp4"
+                with requests.get(v_url, stream=True, timeout=60) as r:
+                    r.raise_for_status()
+                    with open(file_path, "wb") as f:
+                        for chunk in r.iter_content(chunk_size=1024*1024):
+                            if chunk:
+                                f.write(chunk)
+                if os.path.exists(file_path) and os.path.getsize(file_path) > 100 * 1024:
+                    return file_path
+    except Exception as e:
+        print(f"Error Instagram API: {e}")
     return None
 
 def descargar_ytdlp(url):
     os.makedirs("descargas", exist_ok=True)
-    out_pattern = f"descargas/yt_{os.urandom(4).hex()}.%(ext)s"
+    out_pattern = f"descargas/dl_{os.urandom(4).hex()}.%(ext)s"
     ydl_opts = {
         'format': 'best[ext=mp4]/best',
         'outtmpl': out_pattern,
         'quiet': True,
         'no_warnings': True,
         'max_filesize': 48 * 1024 * 1024,
-        'socket_timeout': 30,
+        'socket_timeout': 25,
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'web']
+                'player_client': ['ios', 'android']
             }
         },
         'http_headers': {
-            'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip'
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1'
         }
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -192,7 +212,7 @@ def descargar_ytdlp(url):
         return filename
 
 # ==========================================
-# COMANDOS Y FLUJO PRINCIPAL
+# COMANDOS Y MENSAJES
 # ==========================================
 
 @bot.message_handler(commands=['start'])
@@ -245,11 +265,9 @@ def recibir_enlace(message):
     user_id = message.from_user.id
     url = message.text.strip()
 
-    # Limpiar parámetros de tracking (?igsh=..., ?si=..., etc.)
     if "?" in url:
         url = url.split("?")[0]
 
-    # Canal obligatorio
     if not esta_suscrito(user_id):
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("📢 Unirme al Canal", url=CANAL_ENLACE))
@@ -262,7 +280,6 @@ def recibir_enlace(message):
         )
         return
 
-    # Verificación de límite
     puede_descargar, tipo_usuario, info = verificar_estado_usuario(user_id)
     if not puede_descargar:
         contacto_link = f"https://t.me/{ADMIN_USER.replace('@', '')}"
@@ -286,22 +303,25 @@ def recibir_enlace(message):
     archivo = None
 
     try:
-        # 1. TikTok vía API directa
+        # 1. TikTok
         if "tiktok.com" in url:
             archivo = descargar_tiktok_api(url)
             
-        # 2. Instagram y YouTube vía API rotativa
-        if not archivo and ("instagram.com" in url or "youtube.com" in url or "youtu.be" in url):
-            archivo = descargar_api_externa(url)
+        # 2. Instagram
+        elif "instagram.com" in url:
+            archivo = descargar_instagram_api(url)
+            
+        # 3. YouTube Shorts / Video
+        elif "youtube.com" in url or "youtu.be" in url:
+            archivo = descargar_youtube_api(url)
 
-        # 3. Respaldo general con yt-dlp
+        # 4. Respaldo general usando extractor cliente iOS/Android
         if not archivo or not os.path.exists(archivo):
             archivo = descargar_ytdlp(url)
 
         if archivo and os.path.exists(archivo):
             bot.edit_message_text("📤 *Subiendo video a Telegram...*", chat_id=message.chat.id, message_id=msg_espera.message_id, parse_mode="Markdown")
             
-            # Pie de video comercial y viral
             pie_de_video = (
                 "🎬 *Video descargado con éxito*\n\n"
                 "⚡ *Baja videos de TikTok, Reels y YouTube Shorts con este bot.*\n"
@@ -317,14 +337,13 @@ def recibir_enlace(message):
                     parse_mode="Markdown"
                 )
             
-            # Sumar al contador de descargas si no es VIP ni admin
             if tipo_usuario == "free":
                 sumar_descarga(user_id)
 
             bot.delete_message(message.chat.id, msg_espera.message_id)
         else:
             bot.edit_message_text(
-                "❌ No se pudo descargar este enlace. Asegúrate de que el contenido sea público y no exceda los 50MB.",
+                "❌ No se pudo descargar este enlace. Asegúrate de que el contenido no sea privado ni supere los 50MB.",
                 chat_id=message.chat.id,
                 message_id=msg_espera.message_id
             )
