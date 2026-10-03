@@ -30,7 +30,7 @@ def iniciar_servidor_web():
     app.run(host="0.0.0.0", port=port)
 
 # ==========================================
-# BASE DE DATOS LOCAL
+# BASE DE DATOS LOCAL (SQLite)
 # ==========================================
 conn = sqlite3.connect("usuarios.db", check_same_thread=False)
 cursor = conn.cursor()
@@ -96,10 +96,40 @@ def esta_suscrito(user_id):
         return True
 
 # ==========================================
+# LIMPIEZA AUTOMÁTICA DE ENLACES
+# ==========================================
+
+def sanitizar_enlace(texto):
+    """Extrae y normaliza el enlace eliminando tokens de rastreo."""
+    url_match = re.search(r'(https?://[^\s]+)', texto)
+    if not url_match:
+        return None, None
+    
+    url = url_match.group(1).strip()
+    
+    # Normalizar Instagram
+    ig_match = re.search(r'(?:instagram\.com|instagr\.am)/(?:reel|p|tv)/([a-zA-Z0-9_-]+)', url)
+    if ig_match:
+        clean_url = f"https://www.instagram.com/reel/{ig_match.group(1)}/"
+        return "instagram", clean_url
+
+    # Normalizar YouTube / Shorts
+    yt_match = re.search(r'(?:youtube\.com/shorts/|youtu\.be/|youtube\.com/watch\?v=)([a-zA-Z0-9_-]{11})', url)
+    if yt_match:
+        clean_url = f"https://www.youtube.com/watch?v={yt_match.group(1)}"
+        return "youtube", clean_url
+
+    # Normalizar TikTok
+    if "tiktok.com" in url:
+        clean_url = url.split("?")[0]
+        return "tiktok", clean_url
+
+    return "otro", url
+
+# ==========================================
 # MOTORES DE DESCARGA
 # ==========================================
 
-# 1. TIKTOK
 def descargar_tiktok(url):
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -125,32 +155,42 @@ def descargar_tiktok(url):
         print(f"Error TikTok: {e}")
     return None
 
-# 2. INSTAGRAM
 def descargar_instagram(url):
-    # Extraer únicamente la URL base del post o reel (ej: https://www.instagram.com/reel/CODE/)
-    match = re.search(r'(https?://(?:www\.)?instagram\.com/(?:reel|p|tv)/[^/?&]+)', url)
-    clean_url = (match.group(1) + "/") if match else url.split("?")[0]
-
     video_url = None
-
-    # Intentar endpoint universal Cobalt
+    
+    # Método 1: API Cobalt
     try:
-        payload = {"url": clean_url}
-        h_cobalt = {"Accept": "application/json", "Content-Type": "application/json"}
-        r = requests.post("https://api.cobalt.tools", json=payload, headers=h_cobalt, timeout=12)
+        r = requests.post(
+            "https://api.cobalt.tools",
+            json={"url": url},
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            timeout=12
+        )
         if r.status_code == 200:
             video_url = r.json().get("url")
     except Exception:
         pass
 
-    # Intentar puente secundario SnapSave / VKR
+    # Método 2: Extracción con proxy DD/EE Instagram
     if not video_url:
         try:
-            r2 = requests.get(f"https://api.vkrdownloader.com/v1/get?url={clean_url}", timeout=15).json()
-            downloads = r2.get("data", {}).get("downloads", [])
-            for item in downloads:
-                if item.get("format_id") in ["mp4", "video"] or "video" in str(item.get("format", "")).lower():
-                    video_url = item.get("url")
+            dd_url = url.replace("instagram.com", "ddinstagram.com")
+            headers = {"User-Agent": "TelegramBot (like TwitterBot)"}
+            r = requests.get(dd_url, headers=headers, timeout=12)
+            match = re.search(r'<meta property="og:video" content="([^"]+)"', r.text)
+            if match:
+                video_url = match.group(1).replace("&amp;", "&")
+        except Exception:
+            pass
+
+    # Método 3: Pasarela VKR
+    if not video_url:
+        try:
+            r = requests.get(f"https://api.vkrdownloader.com/v1/get?url={url}", timeout=12).json()
+            downloads = r.get("data", {}).get("downloads", [])
+            for d in downloads:
+                if "video" in str(d.get("format", "")).lower() or d.get("format_id") in ["mp4", "video"]:
+                    video_url = d.get("url")
                     break
         except Exception:
             pass
@@ -159,7 +199,8 @@ def descargar_instagram(url):
         try:
             os.makedirs("descargas", exist_ok=True)
             file_path = f"descargas/ig_{os.urandom(4).hex()}.mp4"
-            with requests.get(video_url, stream=True, timeout=50) as req:
+            headers_dl = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            with requests.get(video_url, headers=headers_dl, stream=True, timeout=50) as req:
                 req.raise_for_status()
                 with open(file_path, "wb") as f:
                     for chunk in req.iter_content(chunk_size=1024*1024):
@@ -170,30 +211,23 @@ def descargar_instagram(url):
             elif os.path.exists(file_path):
                 os.remove(file_path)
         except Exception as e:
-            print(f"Error archivo Instagram: {e}")
+            print(f"Error descargando binario IG: {e}")
 
     return None
 
-# 3. YOUTUBE (Convierte Shorts a formato normal para evitar restricciones)
 def descargar_youtube(url):
-    # Convertir /shorts/ID a /watch?v=ID estándar
-    if "/shorts/" in url:
-        short_id = url.split("/shorts/")[1].split("?")[0].split("/")[0]
-        target_url = f"https://www.youtube.com/watch?v={short_id}"
-    else:
-        target_url = url.split("&")[0]
-
-    os.makedirs("descargas", exist_ok=True)
-    out_pattern = f"descargas/yt_{os.urandom(4).hex()}.%(ext)s"
-
-    # Intentar vía API de extracción directa
+    # Método 1: API externa
     try:
-        payload = {"url": target_url, "videoQuality": "720"}
-        h_cobalt = {"Accept": "application/json", "Content-Type": "application/json"}
-        r = requests.post("https://api.cobalt.tools", json=payload, headers=h_cobalt, timeout=12)
+        r = requests.post(
+            "https://api.cobalt.tools",
+            json={"url": url, "videoQuality": "720"},
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            timeout=12
+        )
         if r.status_code == 200:
             video_url = r.json().get("url")
             if video_url:
+                os.makedirs("descargas", exist_ok=True)
                 file_path = f"descargas/yt_{os.urandom(4).hex()}.mp4"
                 with requests.get(video_url, stream=True, timeout=60) as req:
                     req.raise_for_status()
@@ -206,26 +240,28 @@ def descargar_youtube(url):
     except Exception:
         pass
 
-    # yt-dlp con extractor de Android Creator (evita el bloqueo 'Sign in to confirm you are not a bot')
-    ydl_opts = {
-        'format': 'best[ext=mp4]/best',
-        'outtmpl': out_pattern,
-        'quiet': True,
-        'no_warnings': True,
-        'max_filesize': 48 * 1024 * 1024,
-        'socket_timeout': 25,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android_creator', 'android', 'mweb']
-            }
-        },
-        'http_headers': {
-            'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip'
-        }
-    }
+    # Método 2: yt-dlp con emulación móvil
     try:
+        os.makedirs("descargas", exist_ok=True)
+        out_pattern = f"descargas/yt_{os.urandom(4).hex()}.%(ext)s"
+        ydl_opts = {
+            'format': 'best[ext=mp4]/best',
+            'outtmpl': out_pattern,
+            'quiet': True,
+            'no_warnings': True,
+            'max_filesize': 48 * 1024 * 1024,
+            'socket_timeout': 30,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'ios']
+                }
+            },
+            'http_headers': {
+                'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip'
+            }
+        }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(target_url, download=True)
+            info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
             base, _ = os.path.splitext(filename)
             mp4_name = base + ".mp4"
@@ -233,12 +269,12 @@ def descargar_youtube(url):
                 return mp4_name
             return filename
     except Exception as e:
-        print(f"Error YouTube: {e}")
+        print(f"Error yt-dlp YouTube: {e}")
 
     return None
 
 # ==========================================
-# COMANDOS Y MENSAJES
+# MANEJADOR DE MENSAJES Y COMANDOS
 # ==========================================
 
 @bot.message_handler(commands=['start'])
@@ -285,7 +321,6 @@ def dar_vip_comando(message):
 @bot.message_handler(func=lambda msg: msg.text and ("http://" in msg.text or "https://" in msg.text))
 def recibir_enlace(message):
     user_id = message.from_user.id
-    url = message.text.strip()
 
     if not esta_suscrito(user_id):
         markup = types.InlineKeyboardMarkup()
@@ -309,17 +344,24 @@ def recibir_enlace(message):
         bot.reply_to(message, texto_bloqueo, reply_markup=markup, parse_mode="Markdown")
         return
 
+    plataforma, url_limpia = sanitizar_enlace(message.text)
+    if not url_limpia:
+        bot.reply_to(message, "❌ No se detectó un enlace válido.")
+        return
+
     msg_espera = bot.reply_to(message, "⏳ *Descargando video...*", parse_mode="Markdown")
     os.makedirs("descargas", exist_ok=True)
     archivo = None
 
     try:
-        if "tiktok.com" in url:
-            archivo = descargar_tiktok(url)
-        elif "instagram.com" in url:
-            archivo = descargar_instagram(url)
-        elif "youtube.com" in url or "youtu.be" in url:
-            archivo = descargar_youtube(url)
+        if plataforma == "tiktok":
+            archivo = descargar_tiktok(url_limpia)
+        elif plataforma == "instagram":
+            archivo = descargar_instagram(url_limpia)
+        elif plataforma == "youtube":
+            archivo = descargar_youtube(url_limpia)
+        else:
+            archivo = descargar_youtube(url_limpia)
 
         if archivo and os.path.exists(archivo):
             bot.edit_message_text("📤 *Enviando video...*", chat_id=message.chat.id, message_id=msg_espera.message_id, parse_mode="Markdown")
@@ -345,7 +387,7 @@ def recibir_enlace(message):
             bot.delete_message(message.chat.id, msg_espera.message_id)
         else:
             bot.edit_message_text(
-                "❌ No se pudo procesar este enlace. Verifica que no sea privado.",
+                "❌ No se pudo descargar este enlace. Asegúrate de que el contenido no sea privado ni supere los 50MB.",
                 chat_id=message.chat.id,
                 message_id=msg_espera.message_id
             )
