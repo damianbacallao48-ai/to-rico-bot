@@ -125,39 +125,53 @@ def descargar_tiktok(url):
         print(f"Error TikTok: {e}")
     return None
 
-# 2. INSTAGRAM (Vía pasarela de metadatos abiertos / CDN directo sin cookies)
+# 2. INSTAGRAM (API REST directa con extracción JSON de CDN)
 def descargar_instagram(url):
     match = re.search(r'/(?:reel|p|tv)/([a-zA-Z0-9_-]+)', url)
     if not match:
         return None
     shortcode = match.group(1)
+    clean_target = f"https://www.instagram.com/reel/{shortcode}/"
 
     video_url = None
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    }
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-    # Método 1: Gateway de instagramez (entrega video directo en CDN)
+    # Vía 1: Endpoint de API SnapTube/SaveVideo
     try:
-        ez_url = f"https://instagramez.com/reel/{shortcode}/"
-        res = requests.get(ez_url, headers={"User-Agent": "TelegramBot (like TwitterBot)"}, timeout=10)
-        m = re.search(r'<meta property="og:video" content="([^"]+)"', res.text)
-        if not m:
-            m = re.search(r'<meta property="og:video:secure_url" content="([^"]+)"', res.text)
-        if m:
-            video_url = m.group(1).replace("&amp;", "&")
+        api_url = f"https://delirius-apiofc.vercel.app/download/instagram?url={clean_target}"
+        res = requests.get(api_url, headers=headers, timeout=10).json()
+        if res.get("status"):
+            data = res.get("data", [])
+            if isinstance(data, list) and len(data) > 0:
+                for item in data:
+                    if item.get("type") == "video" or "video" in str(item.get("url", "")):
+                        video_url = item.get("url")
+                        break
+                if not video_url and data[0].get("url"):
+                    video_url = data[0].get("url")
     except Exception:
         pass
 
-    # Método 2: Gateway de vkr/snapcdn
+    # Vía 2: Instancia pública de API Snapsave
     if not video_url:
         try:
-            r_vkr = requests.get(f"https://api.vkrdownloader.com/v1/get?url=https://www.instagram.com/reel/{shortcode}/", timeout=10).json()
-            downloads = r_vkr.get("data", {}).get("downloads", [])
-            for item in downloads:
-                if "video" in str(item.get("format", "")).lower() or item.get("format_id") in ["mp4", "video"]:
-                    video_url = item.get("url")
-                    break
+            api2 = f"https://api.siputzx.my.id/api/d/igdl?url={clean_target}"
+            res2 = requests.get(api2, headers=headers, timeout=10).json()
+            if res2.get("status"):
+                d_list = res2.get("data", [])
+                if isinstance(d_list, list) and len(d_list) > 0:
+                    video_url = d_list[0].get("url")
+        except Exception:
+            pass
+
+    # Vía 3: API directa Instander
+    if not video_url:
+        try:
+            api3 = f"https://api.guruapi.tech/insta/v1/igdl?url={clean_target}"
+            res3 = requests.get(api3, headers=headers, timeout=10).json()
+            arr = res3.get("media", [])
+            if arr:
+                video_url = arr[0].get("url")
         except Exception:
             pass
 
