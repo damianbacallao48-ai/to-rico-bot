@@ -106,11 +106,13 @@ def sanitizar_enlace(texto):
     
     url = url_match.group(1).strip()
     
+    # Extraer ID puro de Instagram y generar enlace limpio sin tokens de rastreo
     ig_match = re.search(r'(?:instagram\.com|instagr\.am)/(?:reel|p|tv)/([a-zA-Z0-9_-]+)', url)
     if ig_match:
         clean_url = f"https://www.instagram.com/reel/{ig_match.group(1)}/"
         return "instagram", clean_url
 
+    # Normalizar YouTube / Shorts
     yt_match = re.search(r'(?:youtube\.com/shorts/|youtu\.be/|youtube\.com/watch\?v=)([a-zA-Z0-9_-]{11})', url)
     if yt_match:
         clean_url = f"https://www.youtube.com/watch?v={yt_match.group(1)}"
@@ -126,7 +128,7 @@ def sanitizar_enlace(texto):
 # MOTORES DE DESCARGA
 # ==========================================
 
-# 1. TIKTOK (INTACTO)
+# 1. TIKTOK (INTACTO - NO TOCADO)
 def descargar_tiktok(url):
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -152,84 +154,61 @@ def descargar_tiktok(url):
         print(f"Error TikTok: {e}")
     return None
 
-# 2. INSTAGRAM (GraphQL directo + Pasarela API optimizada sin timeout)
+# 2. INSTAGRAM (Motor restaurado con emulación móvil de la app oficial)
 def descargar_instagram(url):
-    video_url = None
+    os.makedirs("descargas", exist_ok=True)
+    out_pattern = f"descargas/ig_{os.urandom(4).hex()}.%(ext)s"
     
-    # Extraer código corto del Reel (ej: Dd5J0bgtS4Z)
-    match_code = re.search(r'/(?:reel|p|tv)/([a-zA-Z0-9_-]+)', url)
-    shortcode = match_code.group(1) if match_code else None
+    # 1. Configuración precisa de yt-dlp emulando la app de Instagram
+    ydl_opts = {
+        'format': 'best[ext=mp4]/best',
+        'outtmpl': out_pattern,
+        'quiet': True,
+        'no_warnings': True,
+        'max_filesize': 48 * 1024 * 1024,
+        'socket_timeout': 25,
+        'http_headers': {
+            'User-Agent': 'Instagram 275.0.0.27.98 Android (33/13; 420dpi; 1080x2400; samsung; SM-G998B; o1s; exynos2100)',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Sec-Fetch-Mode': 'navigate'
+        }
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
+            base, _ = os.path.splitext(filename)
+            mp4_name = base + ".mp4"
+            if os.path.exists(mp4_name):
+                return mp4_name
+            return filename
+    except Exception as e:
+        print(f"Intento 1 yt-dlp IG falló: {e}")
 
-    # Método A: Instagram GraphQL JSON directo (Sin cookies, emulando navegador web con X-IG-App-ID)
-    if shortcode:
-        try:
-            gql_url = f"https://www.instagram.com/graphql/query/?query_hash=b3055c01b4b222b8a47dc12b090e4e64&variables=%7B%22shortcode%22:%22{shortcode}%22%7D"
-            gql_headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-                "X-IG-App-ID": "936619743392459",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Accept": "*/*"
-            }
-            res_gql = requests.get(gql_url, headers=gql_headers, timeout=8).json()
-            media = res_gql.get("data", {}).get("shortcode_media", {})
-            if media.get("is_video"):
-                video_url = media.get("video_url")
-        except Exception:
-            pass
-
-    # Método B: Instancia proxy rápida SaveIG
-    if not video_url:
-        try:
-            api_post = "https://v3.igdownloader.app/api/ajaxSearch"
-            h_ig = {
-                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-                "X-Requested-With": "XMLHttpRequest"
-            }
-            r_post = requests.post(api_post, data={"q": url, "t": "media", "lang": "en"}, headers=h_ig, timeout=8)
-            if r_post.status_code == 200:
-                html = r_post.json().get("data", "")
-                found = re.findall(r'href="(https://[^"]+fbcdn\.net/[^"]+)"', html)
-                if not found:
-                    found = re.findall(r'href="([^"]+)"[^>]*download', html)
-                if found:
-                    video_url = found[0].replace("&amp;", "&")
-        except Exception:
-            pass
-
-    # Método C: API de terceros pública
-    if not video_url:
-        try:
-            r_api = requests.get(f"https://api.vkrdownloader.com/v1/get?url={url}", timeout=8).json()
-            downloads = r_api.get("data", {}).get("downloads", [])
-            for d in downloads:
-                if "video" in str(d.get("format", "")).lower() or d.get("format_id") in ["mp4", "video"]:
-                    video_url = d.get("url")
-                    break
-        except Exception:
-            pass
-
-    if video_url:
-        try:
-            os.makedirs("descargas", exist_ok=True)
-            file_path = f"descargas/ig_{os.urandom(4).hex()}.mp4"
-            headers_dl = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-            with requests.get(video_url, headers=headers_dl, stream=True, timeout=40) as req:
-                req.raise_for_status()
-                with open(file_path, "wb") as f:
-                    for chunk in req.iter_content(chunk_size=1024*1024):
-                        if chunk:
-                            f.write(chunk)
-            if os.path.exists(file_path) and os.path.getsize(file_path) > 100 * 1024:
-                return file_path
-            elif os.path.exists(file_path):
-                os.remove(file_path)
-        except Exception as e:
-            print(f"Error guardando video IG: {e}")
+    # 2. Respaldo directo a través de la pasarela de metadatos abiertos de Invidious/Snap
+    try:
+        clean_code = re.search(r'/(?:reel|p|tv)/([a-zA-Z0-9_-]+)', url)
+        if clean_code:
+            code = clean_code.group(1)
+            # Extractor público API rápida
+            r = requests.get(f"https://instagram-videos.vercel.app/api/video?url={url}", timeout=10).json()
+            video_url = r.get("data", {}).get("videoUrl") or r.get("videoUrl")
+            if video_url:
+                file_path = f"descargas/ig_{os.urandom(4).hex()}.mp4"
+                with requests.get(video_url, stream=True, timeout=40) as req:
+                    req.raise_for_status()
+                    with open(file_path, "wb") as f:
+                        for chunk in req.iter_content(chunk_size=1024*1024):
+                            if chunk:
+                                f.write(chunk)
+                if os.path.exists(file_path) and os.path.getsize(file_path) > 100 * 1024:
+                    return file_path
+    except Exception as e:
+        print(f"Intento 2 API IG falló: {e}")
 
     return None
 
-# 3. YOUTUBE (INTACTO)
+# 3. YOUTUBE (INTACTO - NO TOCADO)
 def descargar_youtube(url):
     try:
         r = requests.post(
