@@ -244,3 +244,33 @@ if __name__ == "__main__":
     print("Iniciando servicio...")
     threading.Thread(target=iniciar_servidor_web, daemon=True).start()
     bot.infinity_polling(timeout=20, long_polling_timeout=20)
+
+
+def descargar_instagram_api(url):
+    try:
+        # Extrae el enlace directo del video usando una API pública rápida
+        api_endpoint = "https://api.cobalt.tools"
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+        }
+        payload = {"url": url}
+        res = requests.post(api_endpoint, json=payload, headers=headers, timeout=20)
+        
+        if res.status_code == 200:
+            data = res.json()
+            video_url = data.get("url")
+            if video_url:
+                os.makedirs("descargas", exist_ok=True)
+                file_path = f"descargas/insta_{os.urandom(4).hex()}.mp4"
+                with requests.get(video_url, stream=True, timeout=45) as r:
+                    r.raise_for_status()
+                    with open(file_path, "wb") as f:
+                        for chunk in r.iter_content(chunk_size=1024*1024):
+                            if chunk:
+                                f.write(chunk)
+                if os.path.exists(file_path) and os.path.getsize(file_path) > 100 * 1024:
+                    return file_path
+    except Exception as e:
+        print(f"Error Instagram API: {e}")
+    return None
