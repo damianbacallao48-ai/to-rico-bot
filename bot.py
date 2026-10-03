@@ -99,7 +99,7 @@ def esta_suscrito(user_id):
 # MOTORES DE DESCARGA
 # ==========================================
 
-# 1. TIKTOK (100% OPERATIVO)
+# 1. TIKTOK (INTACTO - NO TOCAR)
 def descargar_tiktok(url):
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -125,33 +125,29 @@ def descargar_tiktok(url):
         print(f"Error TikTok: {e}")
     return None
 
-# 2. YOUTUBE (RESTAURADO: 100% yt-dlp con cliente móvil nativo, sin APIs externas)
+# 2. YOUTUBE (RESTAURADO EXACTO AL ESTADO DE LAS 4:31 AM)
 def descargar_youtube(url):
-    # Limpiar enlace de parámetros raros
-    yt_match = re.search(r'(?:youtube\.com/shorts/|youtu\.be/|youtube\.com/watch\?v=)([a-zA-Z0-9_-]{11})', url)
-    clean_url = f"https://www.youtube.com/watch?v={yt_match.group(1)}" if yt_match else url.split("?")[0]
-
-    os.makedirs("descargas", exist_ok=True)
-    out_pattern = f"descargas/yt_{os.urandom(4).hex()}.%(ext)s"
-    ydl_opts = {
-        'format': 'best[ext=mp4]/best',
-        'outtmpl': out_pattern,
-        'quiet': True,
-        'no_warnings': True,
-        'max_filesize': 48 * 1024 * 1024,
-        'socket_timeout': 35,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android', 'ios']
-            }
-        },
-        'http_headers': {
-            'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip'
-        }
-    }
     try:
+        os.makedirs("descargas", exist_ok=True)
+        out_pattern = f"descargas/yt_{os.urandom(4).hex()}.%(ext)s"
+        ydl_opts = {
+            'format': 'best[ext=mp4]/best',
+            'outtmpl': out_pattern,
+            'quiet': True,
+            'no_warnings': True,
+            'max_filesize': 48 * 1024 * 1024,
+            'socket_timeout': 30,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'ios']
+                }
+            },
+            'http_headers': {
+                'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip'
+            }
+        }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(clean_url, download=True)
+            info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
             base, _ = os.path.splitext(filename)
             mp4_name = base + ".mp4"
@@ -159,10 +155,11 @@ def descargar_youtube(url):
                 return mp4_name
             return filename
     except Exception as e:
-        print(f"Error YouTube: {e}")
+        print(f"Error yt-dlp YouTube: {e}")
+
     return None
 
-# 3. INSTAGRAM (Aislado completamente: API limpia sin tocar YouTube ni TikTok)
+# 3. INSTAGRAM (Aislado sin tocar ni afectar a YouTube ni a TikTok)
 def descargar_instagram(url):
     match = re.search(r'/(?:reel|p|tv)/([a-zA-Z0-9_-]+)', url)
     if not match:
@@ -171,9 +168,8 @@ def descargar_instagram(url):
     clean_target = f"https://www.instagram.com/reel/{shortcode}/"
 
     video_url = None
-    headers_nav = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0"}
+    headers_nav = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-    # Vía A: API rápida de CDN
     try:
         r = requests.get(f"https://api.vkrdownloader.com/v1/get?url={clean_target}", timeout=10).json()
         downloads = r.get("data", {}).get("downloads", [])
@@ -183,14 +179,6 @@ def descargar_instagram(url):
                 break
     except Exception:
         pass
-
-    # Vía B: Fallback de extracción de previsualización
-    if not video_url:
-        try:
-            r_dd = requests.get(f"https://api.ddinstagram.com/reel/{shortcode}/", timeout=10).json()
-            video_url = r_dd.get("video_url")
-        except Exception:
-            pass
 
     if video_url:
         try:
@@ -206,8 +194,8 @@ def descargar_instagram(url):
                 return file_path
             elif os.path.exists(file_path):
                 os.remove(file_path)
-        except Exception as e:
-            print(f"Error binario IG: {e}")
+        except Exception:
+            pass
 
     return None
 
