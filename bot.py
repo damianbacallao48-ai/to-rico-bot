@@ -1,12 +1,14 @@
 import os
-import re
 import sqlite3
 import threading
 from datetime import datetime, timedelta
-import requests
-import yt_dlp
 from flask import Flask
 from telebot import TeleBot, types
+
+# Importar motores independientes
+import motor_tiktok
+import motor_youtube
+import motor_instagram
 
 # ==========================================
 # CONFIGURACIÓN GENERAL
@@ -23,7 +25,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot activo v2"
+    return "Bot Modular Activo"
 
 def iniciar_servidor_web():
     port = int(os.environ.get("PORT", 8080))
@@ -94,110 +96,6 @@ def esta_suscrito(user_id):
         return miembro.status in ['creator', 'administrator', 'member']
     except Exception:
         return True
-
-# ==========================================
-# MOTORES DE DESCARGA
-# ==========================================
-
-# 1. TIKTOK (INTACTO - NO TOCAR)
-def descargar_tiktok(url):
-    try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-        api_url = f"https://www.tikwm.com/api/?url={url}"
-        r = requests.get(api_url, headers=headers, timeout=15).json()
-        if r.get("code") == 0:
-            data = r.get("data", {})
-            video_url = data.get("play") or data.get("wmplay")
-            if video_url:
-                os.makedirs("descargas", exist_ok=True)
-                file_path = f"descargas/tik_{data.get('id', 'temp')}.mp4"
-                with requests.get(video_url, headers=headers, stream=True, timeout=45) as req:
-                    req.raise_for_status()
-                    with open(file_path, "wb") as f:
-                        for chunk in req.iter_content(chunk_size=1024*1024):
-                            if chunk:
-                                f.write(chunk)
-                if os.path.exists(file_path) and os.path.getsize(file_path) > 300 * 1024:
-                    return file_path
-                elif os.path.exists(file_path):
-                    os.remove(file_path)
-    except Exception as e:
-        print(f"Error TikTok: {e}")
-    return None
-
-# 2. YOUTUBE (RESTAURADO EXACTO AL ESTADO DE LAS 4:31 AM)
-def descargar_youtube(url):
-    try:
-        os.makedirs("descargas", exist_ok=True)
-        out_pattern = f"descargas/yt_{os.urandom(4).hex()}.%(ext)s"
-        ydl_opts = {
-            'format': 'best[ext=mp4]/best',
-            'outtmpl': out_pattern,
-            'quiet': True,
-            'no_warnings': True,
-            'max_filesize': 48 * 1024 * 1024,
-            'socket_timeout': 30,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android', 'ios']
-                }
-            },
-            'http_headers': {
-                'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip'
-            }
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            filename = ydl.prepare_filename(info)
-            base, _ = os.path.splitext(filename)
-            mp4_name = base + ".mp4"
-            if os.path.exists(mp4_name):
-                return mp4_name
-            return filename
-    except Exception as e:
-        print(f"Error yt-dlp YouTube: {e}")
-
-    return None
-
-# 3. INSTAGRAM (Aislado sin tocar ni afectar a YouTube ni a TikTok)
-def descargar_instagram(url):
-    match = re.search(r'/(?:reel|p|tv)/([a-zA-Z0-9_-]+)', url)
-    if not match:
-        return None
-    shortcode = match.group(1)
-    clean_target = f"https://www.instagram.com/reel/{shortcode}/"
-
-    video_url = None
-    headers_nav = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-
-    try:
-        r = requests.get(f"https://api.vkrdownloader.com/v1/get?url={clean_target}", timeout=10).json()
-        downloads = r.get("data", {}).get("downloads", [])
-        for item in downloads:
-            if "video" in str(item.get("format", "")).lower() or item.get("format_id") in ["mp4", "video"]:
-                video_url = item.get("url")
-                break
-    except Exception:
-        pass
-
-    if video_url:
-        try:
-            os.makedirs("descargas", exist_ok=True)
-            file_path = f"descargas/ig_{os.urandom(4).hex()}.mp4"
-            with requests.get(video_url, headers=headers_nav, stream=True, timeout=50) as req:
-                req.raise_for_status()
-                with open(file_path, "wb") as f:
-                    for chunk in req.iter_content(chunk_size=1024*1024):
-                        if chunk:
-                            f.write(chunk)
-            if os.path.exists(file_path) and os.path.getsize(file_path) > 100 * 1024:
-                return file_path
-            elif os.path.exists(file_path):
-                os.remove(file_path)
-        except Exception:
-            pass
-
-    return None
 
 # ==========================================
 # MANEJADOR DE MENSAJES Y COMANDOS
@@ -276,13 +174,12 @@ def recibir_enlace(message):
     archivo = None
 
     try:
-        # Enrutamiento estricto e independiente
         if "tiktok.com" in raw_text:
-            archivo = descargar_tiktok(raw_text.split("?")[0])
+            archivo = motor_tiktok.descargar(raw_text)
         elif "youtube.com" in raw_text or "youtu.be" in raw_text:
-            archivo = descargar_youtube(raw_text)
+            archivo = motor_youtube.descargar(raw_text)
         elif "instagram.com" in raw_text or "instagr.am" in raw_text:
-            archivo = descargar_instagram(raw_text)
+            archivo = motor_instagram.descargar(raw_text)
 
         if archivo and os.path.exists(archivo):
             bot.edit_message_text("📤 *Enviando video...*", chat_id=message.chat.id, message_id=msg_espera.message_id, parse_mode="Markdown")
@@ -322,6 +219,6 @@ def recibir_enlace(message):
                 pass
 
 if __name__ == "__main__":
-    print("Iniciando servicio...")
+    print("Iniciando servicio modular...")
     threading.Thread(target=iniciar_servidor_web, daemon=True).start()
     bot.infinity_polling(timeout=20, long_polling_timeout=20)
