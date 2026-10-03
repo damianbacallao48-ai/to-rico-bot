@@ -4,6 +4,7 @@ import sqlite3
 import threading
 from datetime import datetime, timedelta
 import requests
+import yt_dlp
 from flask import Flask
 from telebot import TeleBot, types
 
@@ -24,14 +25,14 @@ CACHE_ENLACES = {}
 
 @app.route('/')
 def home():
-    return "Bot activo y en línea"
+    return "Bot en línea"
 
 def iniciar_servidor_web():
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
 
 # ==========================================
-# BASE DE DATOS LOCAL
+# BASE DE DATOS
 # ==========================================
 conn = sqlite3.connect("usuarios.db", check_same_thread=False)
 cursor = conn.cursor()
@@ -101,7 +102,7 @@ def esta_suscrito(user_id):
 # ==========================================
 def bajar_archivo(url_remota, ruta_local):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    with requests.get(url_remota, headers=headers, stream=True, timeout=60) as req:
+    with requests.get(url_remota, headers=headers, stream=True, timeout=50) as req:
         req.raise_for_status()
         with open(ruta_local, "wb") as f:
             for chunk in req.iter_content(chunk_size=1024*1024):
@@ -110,53 +111,7 @@ def bajar_archivo(url_remota, ruta_local):
     return os.path.exists(ruta_local) and os.path.getsize(ruta_local) > 50 * 1024
 
 # ==========================================
-# PASARELA API EXTERNA (YOUTUBE / INSTAGRAM)
-# ==========================================
-def resolver_con_api_externa(enlace_objetivo):
-    """Consulta múltiples pasarelas públicas sin bloqueo de IP"""
-    instancias = [
-        "https://cobalt.meowing.de",
-        "https://co.meow.gb.net",
-        "https://cobalt-api.kwiatek.xyz"
-    ]
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-    }
-    payload = {
-        "url": enlace_objetivo,
-        "videoQuality": "720"
-    }
-
-    for base in instancias:
-        try:
-            r = requests.post(f"{base}/", json=payload, headers=headers, timeout=12)
-            if r.status_code == 200:
-                data = r.json()
-                st = data.get("status")
-                if st in ["tunnel", "redirect"] and data.get("url"):
-                    return data.get("url")
-                if st == "picker":
-                    for item in data.get("picker", []):
-                        if item.get("url"):
-                            return item.get("url")
-        except Exception:
-            pass
-
-        try:
-            r = requests.post(f"{base}/api/json", json=payload, headers=headers, timeout=12)
-            if r.status_code == 200:
-                data = r.json()
-                if data.get("url"):
-                    return data.get("url")
-        except Exception:
-            pass
-
-    return None
-
-# ==========================================
-# 1. MOTOR TIKTOK (CONSERVA VIDEO Y MP3)
+# 1. MOTOR TIKTOK
 # ==========================================
 def obtener_datos_tiktok(url):
     try:
@@ -167,51 +122,30 @@ def obtener_datos_tiktok(url):
         if r.get("code") == 0:
             return r.get("data", {})
     except Exception as e:
-        print(f"Error TikTok: {e}")
+        print(f"Error TikTok API: {e}")
     return None
 
 # ==========================================
-# 2. MOTOR YOUTUBE (VIA API EXTERNA)
+# 2. MOTOR PINTEREST (FUNCIONA SIN BLOQUEO EN RAILWAY)
 # ==========================================
-def descargar_youtube_api(url):
-    match = re.search(r'(?:shorts/|v=|youtu\.be/)([a-zA-Z0-9_-]{11})', url)
-    clean_url = f"https://www.youtube.com/watch?v={match.group(1)}" if match else url
-
-    url_descarga = resolver_con_api_externa(clean_url)
-    if url_descarga:
+def descargar_pinterest(url):
+    try:
         os.makedirs("descargas", exist_ok=True)
-        archivo_local = f"descargas/yt_{os.urandom(4).hex()}.mp4"
-        if bajar_archivo(url_descarga, archivo_local):
-            return archivo_local
-    return None
-
-# ==========================================
-# 3. MOTOR INSTAGRAM (PASARELA + RESPALDO CDN)
-# ==========================================
-def descargar_instagram_api(url):
-    match = re.search(r'/(?:reel|p|tv)/([a-zA-Z0-9_-]+)', url)
-    clean_target = f"https://www.instagram.com/reel/{match.group(1)}/" if match else url
-
-    # Intento 1: Pasarela Externa
-    url_descarga = resolver_con_api_externa(clean_target)
-    
-    # Intento 2: Respaldo CDN VKR
-    if not url_descarga:
-        try:
-            r = requests.get(f"https://api.vkrdownloader.com/v1/get?url={clean_target}", timeout=10).json()
-            downloads = r.get("data", {}).get("downloads", [])
-            for item in downloads:
-                if "video" in str(item.get("format", "")).lower() or item.get("format_id") in ["mp4", "video"]:
-                    url_descarga = item.get("url")
-                    break
-        except Exception:
-            pass
-
-    if url_descarga:
-        os.makedirs("descargas", exist_ok=True)
-        archivo_local = f"descargas/ig_{os.urandom(4).hex()}.mp4"
-        if bajar_archivo(url_descarga, archivo_local):
-            return archivo_local
+        out_pattern = f"descargas/pin_{os.urandom(4).hex()}.%(ext)s"
+        ydl_opts = {
+            'format': 'best',
+            'outtmpl': out_pattern,
+            'quiet': True,
+            'no_warnings': True,
+            'max_filesize': 48 * 1024 * 1024
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
+            if os.path.exists(filename):
+                return filename
+    except Exception as e:
+        print(f"Error Pinterest: {e}")
     return None
 
 # ==========================================
@@ -225,9 +159,8 @@ def bienvenida(message):
     texto = (
         "⚡ *¡Bienvenido al Descargador Pro!*\n\n"
         "Envía el enlace de cualquier video:\n"
-        "• 🎵 *TikTok* (Video HD o Audio MP3)\n"
-        "• 🔴 *YouTube Shorts y Videos*\n"
-        "• 📸 *Instagram Reels y Posts*\n\n"
+        "• 🎵 *TikTok* (Video HD sin marca o Audio MP3)\n"
+        "• 📌 *Pinterest* (Videos e imágenes en máxima calidad)\n\n"
         f"📊 *Tu plan:* `{texto_estado}`\n"
         f"🆔 *Tu ID:* `{user_id}`\n\n"
         "👉 *Pega el enlace aquí abajo:*"
@@ -284,7 +217,7 @@ def recibir_enlace(message):
         bot.reply_to(message, texto_bloqueo, reply_markup=markup, parse_mode="Markdown")
         return
 
-    # CASO 1: TIKTOK (Pregunta con botones Video o MP3)
+    # CASO 1: TIKTOK (Pregunta Video o Audio MP3)
     if "tiktok.com" in raw_text:
         msg_espera = bot.reply_to(message, "🔍 *Analizando TikTok...*", parse_mode="Markdown")
         datos = obtener_datos_tiktok(raw_text)
@@ -313,43 +246,41 @@ def recibir_enlace(message):
         )
         return
 
-    # CASO 2: YOUTUBE O INSTAGRAM DIRECTO
-    msg_espera = bot.reply_to(message, "⏳ *Descargando video...*", parse_mode="Markdown")
-    archivo = None
-
-    try:
-        if "youtube.com" in raw_text or "youtu.be" in raw_text:
-            archivo = descargar_youtube_api(raw_text)
-        elif "instagram.com" in raw_text or "instagr.am" in raw_text:
-            archivo = descargar_instagram_api(raw_text)
+    # CASO 2: PINTEREST
+    if "pinterest.com" in raw_text or "pin.it" in raw_text:
+        msg_espera = bot.reply_to(message, "⏳ *Descargando de Pinterest...*", parse_mode="Markdown")
+        archivo = descargar_pinterest(raw_text)
 
         if archivo and os.path.exists(archivo):
-            bot.edit_message_text("📤 *Enviando video...*", chat_id=message.chat.id, message_id=msg_espera.message_id, parse_mode="Markdown")
+            bot.edit_message_text("📤 *Enviando contenido...*", chat_id=message.chat.id, message_id=msg_espera.message_id, parse_mode="Markdown")
             with open(archivo, 'rb') as f:
                 bot.send_video(
                     message.chat.id,
                     f,
                     supports_streaming=True,
-                    caption="🎬 *Video descargado con éxito*\n📢 *Canal oficial:* @torico_cuba_db",
+                    caption="📌 *Video de Pinterest descargado*\n📢 *Canal oficial:* @torico_cuba_db",
                     parse_mode="Markdown"
                 )
             if tipo_usuario == "free":
                 sumar_descarga(user_id)
             bot.delete_message(message.chat.id, msg_espera.message_id)
-        else:
-            bot.edit_message_text(
-                "❌ No se pudo descargar este enlace. Asegúrate de que sea público y no supere los 50MB.",
-                chat_id=message.chat.id,
-                message_id=msg_espera.message_id
-            )
-    except Exception as e:
-        bot.edit_message_text(f"❌ Error al procesar: {e}", chat_id=message.chat.id, message_id=msg_espera.message_id)
-    finally:
-        if archivo and os.path.exists(archivo):
             try:
                 os.remove(archivo)
             except Exception:
                 pass
+        else:
+            bot.edit_message_text("❌ No se pudo descargar este enlace de Pinterest.", chat_id=message.chat.id, message_id=msg_espera.message_id)
+        return
+
+    # CASO 3: OTRAS REDES EN MANTENIMIENTO
+    bot.reply_to(
+        message,
+        "🛠 *Módulo en mantenimiento.*\n\n"
+        "Por el momento están habilitadas las descargas de:\n"
+        "• 🎵 *TikTok* (Video y MP3)\n"
+        "• 📌 *Pinterest* (Videos e imágenes)",
+        parse_mode="Markdown"
+    )
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith(('vid_', 'aud_')))
 def procesar_seleccion_tiktok(call):
@@ -419,6 +350,6 @@ def procesar_seleccion_tiktok(call):
                 pass
 
 if __name__ == "__main__":
-    print("Iniciando bot unificado con APIs externas...")
+    print("Iniciando bot con TikTok y Pinterest...")
     threading.Thread(target=iniciar_servidor_web, daemon=True).start()
     bot.infinity_polling(timeout=20, long_polling_timeout=20)
