@@ -1,5 +1,6 @@
 import os
 import json
+import urllib.parse
 import requests
 import telebot
 from telebot import types
@@ -10,242 +11,354 @@ from threading import Thread
 BOT_TOKEN = "8998730541:AAE4p-o4lCvShtYy5alFEXnOFn5SCDmDtR0"
 ADMIN_ID = 6731555041
 
-# Panel SMM (JAP / JustAnotherPanel u otro compatible con API v2)
-API_URL = os.environ.get("API_URL", "https://justanotherpanel.com/api/v2")
-API_KEY = os.environ.get("API_KEY", "")
+API_URL = "https://justanotherpanel.com/api/v2"
+API_KEY = "3625c0a8ec2d5e89b7172cfcbbc65955"
+
+# --- NOTIFICACIÓN POR WHATSAPP (CallMeBot) ---
+WHATSAPP_PHONE = "+5358960660"
+# Coloca la apikey numérica que te da CallMeBot al escribirle por WhatsApp:
+CALLMEBOT_APIKEY = "TU_APIKEY_AQUI"
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# --- BASE DE DATOS LOCAL (JSON) ---
-DB_FILE = "database.json"
+# --- DATOS DE COBRO ---
+DATOS_PAGO = {
+    "tarjeta": "9225 0000 0000 0000",   # Tu número de tarjeta CUP
+    "titular": "Tu Nombre Completo",     # Titular de la tarjeta
+    "telefono": "58960660"
+}
 
-def load_db():
-    if not os.path.exists(DB_FILE):
-        return {"users": {}}
+# --- FUNCIÓN DE ALERTA WHATSAPP ---
+def enviar_whatsapp(texto):
+    if CALLMEBOT_APIKEY == "TU_APIKEY_AQUI":
+        return
     try:
-        with open(DB_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        msg_encoded = urllib.parse.quote(texto)
+        url = f"https://api.callmebot.com/whatsapp.php?phone={WHATSAPP_PHONE}&text={msg_encoded}&apikey={CALLMEBOT_APIKEY}"
+        requests.get(url, timeout=10)
     except Exception:
-        return {"users": {}}
+        pass
 
-def save_db(data):
-    with open(DB_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
-
-def get_user_balance(user_id):
-    db = load_db()
-    return db["users"].get(str(user_id), {}).get("balance", 0.0)
-
-def update_user_balance(user_id, amount):
-    db = load_db()
-    uid = str(user_id)
-    if uid not in db["users"]:
-        db["users"][uid] = {"balance": 0.0}
-    db["users"][uid]["balance"] += amount
-    save_db(db)
-    return db["users"][uid]["balance"]
-
-# Catálogo local de servicios disponibles
-SERVICIOS = {
-    "1": {"nombre": "Seguidores de Instagram [Garantía]", "precio_mil": 1.50, "service_id": 101},
-    "2": {"nombre": "Likes de Instagram [Rápidos]", "precio_mil": 0.50, "service_id": 102},
-    "3": {"nombre": "Vistas de TikTok [Alta Retención]", "precio_mil": 0.30, "service_id": 103},
-    "4": {"nombre": "Seguidores de TikTok", "precio_mil": 2.00, "service_id": 104}
+# --- CATÁLOGO DE PAQUETES Y COMBOS ---
+PAQUETES = {
+    # Individuales
+    "ig_likes": {
+        "tipo": "simple",
+        "red": "Instagram",
+        "nombre": "❤️ 1.000 Likes de Instagram",
+        "precio": 1000,
+        "service_id": 5956,
+        "cantidad": 1000,
+        "tipo_link": "enlace de la publicación o reel"
+    },
+    "ig_seguidores": {
+        "tipo": "simple",
+        "red": "Instagram",
+        "nombre": "👤 1.000 Seguidores Instagram (30D)",
+        "precio": 3500,
+        "service_id": 7514,
+        "cantidad": 1000,
+        "tipo_link": "enlace de tu perfil público"
+    },
+    "tt_vistas": {
+        "tipo": "simple",
+        "red": "TikTok",
+        "nombre": "👁️ 1.000 Vistas de TikTok (Rápidas)",
+        "precio": 1000,
+        "service_id": 4412,
+        "cantidad": 1000,
+        "tipo_link": "enlace del video"
+    },
+    "tt_seguidores": {
+        "tipo": "simple",
+        "red": "TikTok",
+        "nombre": "👥 1.000 Seguidores TikTok (30D)",
+        "precio": 3000,
+        "service_id": 10090,
+        "cantidad": 1000,
+        "tipo_link": "enlace de tu perfil"
+    },
+    # Combos
+    "combo_ig_completo": {
+        "tipo": "combo",
+        "red": "Combos",
+        "nombre": "🔥 Combo IG: 1.000 Seguidores + 500 Likes",
+        "precio": 5000,
+        "subservicios": [
+            {
+                "service_id": 7514,
+                "cantidad": 1000,
+                "label": "Seguidores",
+                "tipo_link": "enlace del perfil de Instagram"
+            },
+            {
+                "service_id": 5956,
+                "cantidad": 500,
+                "label": "Likes",
+                "tipo_link": "enlace de la foto o reel para los Likes"
+            }
+        ]
+    }
 }
 
 user_sessions = {}
+pedidos_pendientes = {}
 
-# --- SERVIDOR WEB PARA MANTENER ACTIVO EL CONTENEDOR ---
+# --- SERVIDOR WEB (RAILWAY) ---
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot en funcionamiento activo."
+    return "Bot en línea con soporte para Combos y WhatsApp."
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
 
-# --- MANEJADORES DE COMANDOS ---
-
+# --- MENÚ PRINCIPAL ---
 @bot.message_handler(commands=['start'])
 def start_command(message):
-    first_name = message.from_user.first_name or "Usuario"
-    
     markup = types.InlineKeyboardMarkup(row_width=2)
-    btn_order = types.InlineKeyboardButton("🛒 Realizar Pedido", callback_data="btn_order")
-    btn_balance = types.InlineKeyboardButton("💰 Mi Saldo", callback_data="btn_balance")
-    btn_services = types.InlineKeyboardButton("📋 Lista de Servicios", callback_data="btn_services")
-    btn_support = types.InlineKeyboardButton("🆘 Soporte", callback_data="btn_support")
-    markup.add(btn_order, btn_balance, btn_services, btn_support)
+    btn_ig = types.InlineKeyboardButton("📸 Instagram", callback_data="cat_Instagram")
+    btn_tt = types.InlineKeyboardButton("🎵 TikTok", callback_data="cat_TikTok")
+    btn_combos = types.InlineKeyboardButton("🔥 Super Combos", callback_data="cat_Combos")
+    markup.add(btn_ig, btn_tt)
+    markup.add(btn_combos)
 
     texto = (
-        f"👋 ¡Hola, *{first_name}*! Bienvenido a *Impulso Redes Pro*.\n\n"
-        "Potencia tus redes sociales de forma rápida, segura y automatizada.\n\n"
-        "Selecciona una opción del menú para comenzar:"
+        f"👋 ¡Hola, *{message.from_user.first_name}*!\n\n"
+        "Bienvenido a **Impulso Redes Pro**.\n"
+        "Selecciona el servicio o combo que deseas solicitar:"
     )
     bot.send_message(message.chat.id, texto, reply_markup=markup, parse_mode="Markdown")
 
-@bot.message_handler(commands=['recargar'])
-def cmd_recargar(message):
-    if message.from_user.id != ADMIN_ID:
-        bot.reply_to(message, "❌ No tienes permisos para usar este comando.")
-        return
+# --- LISTA DE OFERTAS ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith("cat_"))
+def handle_category(call):
+    bot.answer_callback_query(call.id)
+    cat = call.data.split("_")[1]
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for pkg_id, pkg in PAQUETES.items():
+        if pkg["red"] == cat:
+            markup.add(types.InlineKeyboardButton(f"{pkg['nombre']} - {pkg['precio']:,} CUP", callback_data=f"buy_{pkg_id}"))
+    
+    markup.add(types.InlineKeyboardButton("🔙 Volver", callback_data="back_start"))
+    bot.edit_message_text(f"Ofertas disponibles en *{cat}*:", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
 
-    partes = message.text.split()
-    if len(partes) != 3:
-        bot.reply_to(message, "⚠️ Uso incorrecto.\nFormato: `/recargar <ID_USUARIO> <CANTIDAD>`", parse_mode="Markdown")
-        return
+@bot.callback_query_handler(func=lambda call: call.data == "back_start")
+def back_to_start(call):
+    bot.answer_callback_query(call.id)
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(types.InlineKeyboardButton("📸 Instagram", callback_data="cat_Instagram"),
+               types.InlineKeyboardButton("🎵 TikTok", callback_data="cat_TikTok"))
+    markup.add(types.InlineKeyboardButton("🔥 Super Combos", callback_data="cat_Combos"))
+    bot.edit_message_text("Selecciona una opción:", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
-    try:
-        target_id = partes[1]
-        monto = float(partes[2])
-        nuevo_saldo = update_user_balance(target_id, monto)
-
-        bot.reply_to(
-            message,
-            f"✅ Se han acreditado ${monto:.2f} al usuario `{target_id}`.\n"
-            f"Saldo actual: *${nuevo_saldo:.2f} créditos*",
-            parse_mode="Markdown"
-        )
-
-        try:
-            bot.send_message(
-                target_id,
-                f"🎉 ¡Tu saldo ha sido recargado!\n\n"
-                f"Se agregaron *${monto:.2f} créditos* a tu cuenta.\n"
-                f"Saldo total disponible: *${nuevo_saldo:.2f} créditos*",
-                parse_mode="Markdown"
-            )
-        except Exception:
-            pass
-
-    except ValueError:
-        bot.reply_to(message, "❌ El monto debe ser un valor numérico válido.")
-
-# --- CALLBACKS DEL MENÚ ---
-
-@bot.callback_query_handler(func=lambda call: True)
-def callback_handler(call):
+# --- SELECCIÓN DEL SERVICIO/COMBO ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
+def handle_buy(call):
+    bot.answer_callback_query(call.id)
+    pkg_id = call.data.split("_", 1)[1]
+    pkg = PAQUETES[pkg_id]
     user_id = str(call.from_user.id)
-    chat_id = call.message.chat.id
 
-    if call.data == "btn_balance":
-        saldo = get_user_balance(user_id)
-        bot.answer_callback_query(call.id)
-        bot.send_message(
-            chat_id,
-            f"💰 *Tu saldo actual es:* `${saldo:.2f} créditos`\n\n"
-            "Para recargar fondos, contacta al administrador.",
-            parse_mode="Markdown"
+    if pkg["tipo"] == "simple":
+        user_sessions[user_id] = {
+            "pkg_id": pkg_id,
+            "step": "AWAIT_LINK"
+        }
+        texto = f"Has seleccionado: *{pkg['nombre']}*\n💰 *Precio:* {pkg['precio']:,} CUP\n\n👉 Envía el *{pkg['tipo_link']}*:"
+    else:
+        # Modo Combo
+        user_sessions[user_id] = {
+            "pkg_id": pkg_id,
+            "step": "AWAIT_COMBO_LINK",
+            "sub_index": 0,
+            "links": []
+        }
+        sub = pkg["subservicios"][0]
+        texto = (
+            f"Has seleccionado: *{pkg['nombre']}*\n"
+            f"💰 *Precio:* {pkg['precio']:,} CUP\n\n"
+            f"👉 Envía el primer enlace (*{sub['tipo_link']}*):"
         )
 
-    elif call.data == "btn_services":
-        bot.answer_callback_query(call.id)
-        texto = "📋 *Servicios Disponibles:*\n\n"
-        for k, v in SERVICIOS.items():
-            texto += f"• *{v['nombre']}*\n  Precio por 1k: `${v['precio_mil']:.2f}`\n\n"
-        bot.send_message(chat_id, texto, parse_mode="Markdown")
+    bot.send_message(call.message.chat.id, texto, parse_mode="Markdown")
 
-    elif call.data == "btn_support":
-        bot.answer_callback_query(call.id)
-        bot.send_message(
-            chat_id,
-            f"🆘 Para dudas o soporte para recargas, contacta a: [Administrador](tg://user?id={ADMIN_ID})",
-            parse_mode="Markdown"
-        )
+# --- PROCESAMIENTO DE ENLACES ---
+@bot.message_handler(func=lambda msg: str(msg.from_user.id) in user_sessions and user_sessions[str(msg.from_user.id)].get("step") in ["AWAIT_LINK", "AWAIT_COMBO_LINK"])
+def handle_link_input(message):
+    user_id = str(message.from_user.id)
+    link = message.text.strip()
 
-    elif call.data == "btn_order":
-        bot.answer_callback_query(call.id)
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        for k, v in SERVICIOS.items():
-            markup.add(types.InlineKeyboardButton(f"{v['nombre']} - ${v['precio_mil']}/k", callback_data=f"sel_{k}"))
-        bot.send_message(chat_id, "Selecciona el servicio que deseas ordenar:", reply_markup=markup)
+    if not link.startswith("http"):
+        bot.reply_to(message, "⚠️ El enlace debe comenzar con `http://` o `https://`. Inténtalo de nuevo:")
+        return
 
-    elif call.data.startswith("sel_"):
-        bot.answer_callback_query(call.id)
-        servicio_key = call.data.split("_")[1]
-        user_sessions[user_id] = {"servicio": SERVICIOS[servicio_key], "step": "LINK"}
-        bot.send_message(
-            chat_id,
-            f"Seleccionaste: *{SERVICIOS[servicio_key]['nombre']}*\n\n"
-            "Envía el *enlace* del perfil, publicación o video a promocionar:",
-            parse_mode="Markdown"
-        )
+    session = user_sessions[user_id]
+    pkg = PAQUETES[session["pkg_id"]]
 
-# --- FLUJO DE PEDIDO PASO A PASO ---
+    if session["step"] == "AWAIT_LINK":
+        session["links"] = [link]
+        session["step"] = "AWAIT_PAYMENT_PROOF"
+    elif session["step"] == "AWAIT_COMBO_LINK":
+        session["links"].append(link)
+        session["sub_index"] += 1
+        if session["sub_index"] < len(pkg["subservicios"]):
+            siguiente = pkg["subservicios"][session["sub_index"]]
+            bot.send_message(message.chat.id, f"✅ Recibido. Ahora envía el *{siguiente['tipo_link']}*:", parse_mode="Markdown")
+            return
+        else:
+            session["step"] = "AWAIT_PAYMENT_PROOF"
 
-@bot.message_handler(func=lambda msg: str(msg.from_user.id) in user_sessions)
-def handle_order_flow(message):
+    texto = (
+        f"✅ *Enlaces registrados.*\n\n"
+        f"📌 *Detalles del pedido:*\n"
+        f"• Servicio: {pkg['nombre']}\n"
+        f"• Total a pagar: *{pkg['precio']:,} CUP*\n\n"
+        "💳 *Datos para realizar la transferencia:*\n"
+        f"• Tarjeta: `{DATOS_PAGO['tarjeta']}` *(toca para copiar)*\n"
+        f"• Titular: *{DATOS_PAGO['titular']}*\n"
+        f"• Teléfono / EnZona: `{DATOS_PAGO['telefono']}`\n\n"
+        "📸 **Envía la captura de tu transferencia aquí mismo** para completar la orden."
+    )
+    bot.send_message(message.chat.id, texto, parse_mode="Markdown")
+
+# --- COMPROBANTE DE PAGO ---
+@bot.message_handler(content_types=['photo'], func=lambda msg: str(msg.from_user.id) in user_sessions and user_sessions[str(msg.from_user.id)].get("step") == "AWAIT_PAYMENT_PROOF")
+def handle_payment_proof(message):
     user_id = str(message.from_user.id)
     session = user_sessions[user_id]
+    pkg = PAQUETES[session["pkg_id"]]
+    order_key = f"{user_id}_{message.message_id}"
 
-    if session.get("step") == "LINK":
-        session["link"] = message.text.strip()
-        session["step"] = "CANTIDAD"
-        bot.send_message(
-            message.chat.id,
-            "Ahora indica la **cantidad** que deseas ordenar (ejemplo: 500, 1000):",
-            parse_mode="Markdown"
-        )
+    pedidos_pendientes[order_key] = {
+        "user_id": user_id,
+        "pkg": pkg,
+        "links": session["links"]
+    }
 
-    elif session.get("step") == "CANTIDAD":
-        try:
-            cantidad = int(message.text.strip())
-            if cantidad <= 0:
-                raise ValueError
-        except ValueError:
-            bot.reply_to(message, "❌ Por favor introduce un número entero positivo.")
-            return
+    bot.send_message(
+        message.chat.id,
+        "⏳ *Comprobante recibido.*\nEl administrador revisará el pago en unos momentos y tu orden se enviará automáticamente.",
+        parse_mode="Markdown"
+    )
 
-        servicio = session["servicio"]
-        costo = (cantidad / 1000.0) * servicio["precio_mil"]
-        saldo_disponible = get_user_balance(user_id)
+    # Notificación a Telegram del Admin
+    file_id = message.photo[-1].file_id
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("✅ Aprobar y Enviar", callback_data=f"app_{order_key}"),
+        types.InlineKeyboardButton("❌ Rechazar", callback_data=f"rej_{order_key}")
+    )
 
-        if saldo_disponible < costo:
-            bot.send_message(
-                message.chat.id,
-                f"❌ Saldo insuficiente.\n\n"
-                f"Costo del pedido: *${costo:.2f} créditos*\n"
-                f"Tu saldo actual: *${saldo_disponible:.2f} créditos*\n\n"
-                "Usa /start para volver al menú o recarga saldo.",
-                parse_mode="Markdown"
-            )
-            del user_sessions[user_id]
-            return
+    caption = (
+        f"🔔 *Nuevo comprobante recibido:*\n\n"
+        f"👤 Cliente: [{message.from_user.first_name}](tg://user?id={user_id}) (`{user_id}`)\n"
+        f"📦 Servicio: {pkg['nombre']}\n"
+        f"💰 Monto: *{pkg['precio']:,} CUP*\n"
+        f"🔗 Enlaces: {', '.join(session['links'])}"
+    )
+    bot.send_photo(ADMIN_ID, file_id, caption=caption, reply_markup=markup, parse_mode="Markdown")
 
-        nuevo_saldo = update_user_balance(user_id, -costo)
+    # Notificación a tu WhatsApp
+    msg_wa = (
+        f"🔔 *NUEVO PAGO EN EL BOT*\n\n"
+        f"• Cliente: {message.from_user.first_name}\n"
+        f"• Paquete: {pkg['nombre']}\n"
+        f"• Monto: {pkg['precio']:,} CUP\n\n"
+        f"Revisa tu Telegram para aprobar o rechazar."
+    )
+    enviar_whatsapp(msg_wa)
 
-        order_id = "LOCAL-" + str(message.message_id)
-        if API_KEY:
+    del user_sessions[user_id]
+
+# --- APROBACIÓN POR EL ADMINISTRADOR ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith("app_") or call.data.startswith("rej_"))
+def handle_admin_decision(call):
+    if call.from_user.id != ADMIN_ID:
+        bot.answer_callback_query(call.id, "No autorizado.")
+        return
+
+    action, order_key = call.data.split("_", 1)
+    order = pedidos_pendientes.get(order_key)
+
+    if not order:
+        bot.answer_callback_query(call.id, "Este pedido ya fue gestionado.")
+        return
+
+    user_id = order["user_id"]
+    pkg = order["pkg"]
+    links = order["links"]
+
+    if action == "app":
+        bot.answer_callback_query(call.id, "Enviando a JAP...")
+        ordenes_creadas = []
+
+        if pkg["tipo"] == "simple":
+            payload = {
+                "key": API_KEY,
+                "action": "add",
+                "service": pkg["service_id"],
+                "link": links[0],
+                "quantity": pkg["cantidad"]
+            }
             try:
+                res = requests.post(API_URL, data=payload, timeout=20).json()
+                if "order" in res:
+                    ordenes_creadas.append(str(res["order"]))
+            except Exception:
+                pass
+        else:
+            # Ejecución del Combo
+            for idx, sub in enumerate(pkg["subservicios"]):
                 payload = {
                     "key": API_KEY,
                     "action": "add",
-                    "service": servicio["service_id"],
-                    "link": session["link"],
-                    "quantity": cantidad
+                    "service": sub["service_id"],
+                    "link": links[idx],
+                    "quantity": sub["cantidad"]
                 }
-                res = requests.post(API_URL, data=payload, timeout=15).json()
-                if "order" in res:
-                    order_id = str(res["order"])
-            except Exception as e:
-                print(f"Error conectando con la API SMM: {e}")
+                try:
+                    res = requests.post(API_URL, data=payload, timeout=20).json()
+                    if "order" in res:
+                        ordenes_creadas.append(f"{sub['label']}: #{res['order']}")
+                except Exception:
+                    pass
 
-        bot.send_message(
-            message.chat.id,
-            f"✅ *¡Pedido creado con éxito!*\n\n"
-            f"🆔 *ID del Pedido:* `{order_id}`\n"
-            f"📌 *Servicio:* {servicio['nombre']}\n"
-            f"🔗 *Enlace:* {session['link']}\n"
-            f"🔢 *Cantidad:* {cantidad}\n"
-            f"💵 *Costo:* ${costo:.2f} créditos\n"
-            f"💰 *Saldo restante:* ${nuevo_saldo:.2f} créditos",
+        if ordenes_creadas:
+            ids_str = ", ".join(ordenes_creadas)
+            bot.edit_message_caption(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                caption=f"{call.message.caption}\n\n✅ *Aprobado.* Orden(es) JAP: `{ids_str}`",
+                parse_mode="Markdown"
+            )
+            bot.send_message(
+                user_id,
+                f"🎉 *¡Pago confirmado y orden en proceso!*\n\n"
+                f"📌 Paquete: {pkg['nombre']}\n"
+                f"🆔 Pedido(s): `{ids_str}`\n\n"
+                "La entrega ha comenzado automáticamente.",
+                parse_mode="Markdown"
+            )
+        else:
+            bot.send_message(ADMIN_ID, "⚠️ Ocurrió un error al enviar las órdenes a JAP. Verifica el saldo de tu cuenta en JAP.")
+
+    elif action == "rej":
+        bot.answer_callback_query(call.id, "Pedido rechazado.")
+        bot.edit_message_caption(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            caption=f"{call.message.caption}\n\n❌ *Rechazado por el administrador.*",
             parse_mode="Markdown"
         )
-        del user_sessions[user_id]
+        bot.send_message(user_id, "❌ Tu comprobante no pudo ser verificado. Contacta al soporte si crees que es un error.")
 
-# --- INICIO DE EJECUCIÓN ---
+    del pedidos_pendientes[order_key]
+
+# --- INICIO ---
 if __name__ == "__main__":
     Thread(target=run_web, daemon=True).start()
     bot.infinity_polling(skip_pending=True)
