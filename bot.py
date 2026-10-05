@@ -7,7 +7,7 @@ from flask import Flask
 from threading import Thread
 
 # --- CONFIGURACIÓN PRINCIPAL ---
-BOT_TOKEN = "8998730541:AAE4p-o4lCvShtYy5alFEXnOFn5SCDmDtR0"strip()
+BOT_TOKEN = "8998730541:AAE4p-o4lCvShtYy5alFEXnOFn5SCDmDtR0"
 ADMIN_ID = 6731555041
 
 # Panel SMM (JAP / JustAnotherPanel u otro compatible con API v2)
@@ -214,10 +214,8 @@ def handle_order_flow(message):
             del user_sessions[user_id]
             return
 
-        # Descontar saldo
         nuevo_saldo = update_user_balance(user_id, -costo)
 
-        # Enviar orden al panel API (si hay API_KEY configurada)
         order_id = "LOCAL-" + str(message.message_id)
         if API_KEY:
             try:
