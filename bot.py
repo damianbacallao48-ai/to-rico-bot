@@ -411,20 +411,16 @@ def es_url_youtube(url):
 
 def obtener_info_youtube(url):
     try:
+        clean_url = url.split("?")[0].strip()
         opciones = {
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
             "skip_download": True,
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["android", "ios"]
-                }
-            },
         }
 
         with yt_dlp.YoutubeDL(opciones) as ydl:
-            info = ydl.extract_info(url, download=False)
+            info = ydl.extract_info(clean_url, download=False)
 
         if not info:
             return None
@@ -432,9 +428,9 @@ def obtener_info_youtube(url):
         return {
             "id": info.get("id"),
             "title": info.get("title") or "Video de YouTube",
-            "url": url,
+            "url": clean_url,
             "duration": info.get("duration") or 0,
-            "webpage_url": info.get("webpage_url") or url,
+            "webpage_url": info.get("webpage_url") or clean_url,
         }
     except Exception as e:
         print(f"Error obteniendo info de YouTube: {e}")
@@ -444,27 +440,17 @@ def obtener_info_youtube(url):
 def descargar_youtube(url, tipo, item_id):
     os.makedirs("descargas", exist_ok=True)
 
-    opciones_base = {
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
-        "ffmpeg_location": FFMPEG_PATH,
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["android", "ios"]
-            }
-        }
-    }
-
     if tipo == "video":
         salida = os.path.abspath(
             os.path.join("descargas", f"youtube_{item_id}.mp4")
         )
         opciones = {
-            **opciones_base,
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            "ffmpeg_location": FFMPEG_PATH,
             "outtmpl": salida,
-            "format": "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
-            "merge_output_format": "mp4",
+            "format": "best[ext=mp4]/best",
         }
 
     elif tipo == "audio":
@@ -472,7 +458,10 @@ def descargar_youtube(url, tipo, item_id):
             os.path.join("descargas", f"youtube_{item_id}.mp3")
         )
         opciones = {
-            **opciones_base,
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            "ffmpeg_location": FFMPEG_PATH,
             "outtmpl": salida,
             "format": "bestaudio/best",
             "postprocessors": [
@@ -665,7 +654,7 @@ def recibir_enlace(message):
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
             types.InlineKeyboardButton(
-                "▶️️ Descargar Video",
+                "▶️ Descargar Video",
                 callback_data=f"ytv_{item_id}",
             ),
             types.InlineKeyboardButton(
@@ -844,7 +833,7 @@ def procesar_seleccion(call):
         if not info_yt or not info_yt.get("youtube"):
             bot.answer_callback_query(
                 call.id,
-                "⚠️️ Enlace expirado. Envíalo de nuevo.",
+                "⚠️ Enlace expirado. Envíalo de nuevo.",
                 show_alert=True,
             )
             return
