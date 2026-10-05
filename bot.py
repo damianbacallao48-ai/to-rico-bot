@@ -16,13 +16,7 @@ from telebot import TeleBot, types
 # ============================================================
 # CONFIGURACIÓN
 # ============================================================
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-
-if not BOT_TOKEN:
-    raise RuntimeError(
-        "Falta la variable de entorno BOT_TOKEN. "
-        "Configúrala con el token nuevo de @BotFather."
-    )
+BOT_TOKEN = "8875681851:AAF-LUfVC7MoSW_Mwxva82NVxVnaknQpAfU"
 
 ADMIN_ID = 6731555041
 CANAL_OBLIGATORIO = "@torico_cuba_db"
