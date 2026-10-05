@@ -1,6 +1,3 @@
 pyTelegramBotAPI
 requests
-instaloader
-yt-dlp
-imageio-ffmpeg
 Flask
