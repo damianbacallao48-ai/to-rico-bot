@@ -376,12 +376,41 @@ def descargar_instagram(url):
     item_id = os.urandom(6).hex()
     salida = os.path.abspath(os.path.join("descargas", f"ig_{item_id}.mp4"))
 
+    # 1. API directa para evadir bloqueos de Meta
+    try:
+        api_url = "https://vkrdownloader.org/server/"
+        params = {"api_key": "vkrdownloader", "vkr": clean_url}
+        resp = requests.get(api_url, params=params, timeout=20)
+        if resp.status_code == 200:
+            datos = resp.json()
+            formatos = datos.get("formats") or []
+            video_url = None
+            for fmt in formatos:
+                if fmt.get("url") and fmt.get("ext") == "mp4":
+                    video_url = fmt["url"]
+                    break
+            if not video_url and datos.get("source"):
+                video_url = datos.get("source")
+
+            if video_url and bajar_archivo(video_url, salida):
+                return salida, None
+    except Exception as e:
+        print(f"Fallo método API directa de Instagram: {e}")
+
+    # 2. yt-dlp con User-Agent móvil
     opciones = {
         "quiet": True,
         "no_warnings": True,
         "outtmpl": salida,
         "format": "best[ext=mp4]/best",
         "ffmpeg_location": FFMPEG_PATH,
+        "http_headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+                "AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 "
+                "Instagram 300.0.0.0"
+            )
+        },
     }
 
     try:
@@ -393,12 +422,13 @@ def descargar_instagram(url):
     except Exception as e:
         print(f"Error yt-dlp con Instagram: {e}")
 
+    # 3. Fallback con Instaloader
     archivo_loader, carpeta_temp = descargar_instagram_instaloader(clean_url)
     return archivo_loader, carpeta_temp
 
 
 # ============================================================
-# YOUTUBE (VERSIÓN ORIGINAL ESTABLE)
+# YOUTUBE
 # ============================================================
 def es_url_youtube(url):
     url_lower = url.lower()
@@ -411,6 +441,18 @@ def es_url_youtube(url):
 
 def obtener_info_youtube(url):
     try:
+        clean_url = url.split("?")[0].strip()
+
+        # Si es un Short, extraemos el ID para convertirlo al formato estándar watch
+        match_short = re.search(r"shorts/([a-zA-Z0-9_-]+)", clean_url)
+        if match_short:
+            v_id = match_short.group(1)
+            target_url = f"https://www.youtube.com/watch?v={v_id}"
+        else:
+            match_v = re.search(r"(?:v=|youtu\.be/)([a-zA-Z0-9_-]+)", clean_url)
+            v_id = match_v.group(1) if match_v else os.urandom(6).hex()
+            target_url = clean_url
+
         opciones = {
             "quiet": True,
             "no_warnings": True,
@@ -418,21 +460,32 @@ def obtener_info_youtube(url):
             "skip_download": True,
         }
 
-        with yt_dlp.YoutubeDL(opciones) as ydl:
-            info = ydl.extract_info(url, download=False)
+        try:
+            with yt_dlp.YoutubeDL(opciones) as ydl:
+                info = ydl.extract_info(target_url, download=False)
+                if info:
+                    return {
+                        "id": str(info.get("id") or v_id),
+                        "title": info.get("title") or "Video de YouTube",
+                        "url": target_url,
+                        "duration": info.get("duration") or 0,
+                        "webpage_url": info.get("webpage_url") or target_url,
+                    }
+        except Exception:
+            pass
 
-        if not info:
-            return None
-
+        # Fallback si yt-dlp no extrae metadatos por restricciones de IP:
+        # genera los botones igualmente para descargar el contenido sin bloquear
         return {
-            "id": info.get("id"),
-            "title": info.get("title") or "Video de YouTube",
-            "url": url,
-            "duration": info.get("duration") or 0,
-            "webpage_url": info.get("webpage_url") or url,
+            "id": str(v_id),
+            "title": "Video de YouTube",
+            "url": target_url,
+            "duration": 0,
+            "webpage_url": target_url,
         }
+
     except Exception as e:
-        print(f"Error obteniendo info de YouTube: {e}")
+        print(f"Error procesando URL de YouTube: {e}")
         return None
 
 
@@ -955,7 +1008,7 @@ def procesar_seleccion(call):
 
     info = CACHE_ENLACES.get(item_id)
     if not info:
-        bot.answer_callback_query(call.id, "⚠️ Enlace expirado. Envíalo de nuevo.", show_alert=True)
+        bot.answer_callback_query(call.id, "⚠️️ Enlace expirado. Envíalo de nuevo.", show_alert=True)
         return
 
     creado = info.get("created")
