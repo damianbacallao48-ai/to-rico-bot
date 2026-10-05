@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 import requests
 import instaloader
 import yt_dlp
+import imageio_ffmpeg
 from flask import Flask
 from telebot import TeleBot, types
 
@@ -35,6 +36,9 @@ CACHE_ENLACES = {}
 
 # Evita problemas de concurrencia con SQLite
 DB_LOCK = threading.RLock()
+
+# Ruta al binario ejecutable de ffmpeg provisto por imageio_ffmpeg
+FFMPEG_PATH = imageio_ffmpeg.get_ffmpeg_exe()
 
 # ============================================================
 # INSTALOADER
@@ -100,13 +104,11 @@ def verificar_estado_usuario(user_id):
         conn = obtener_conexion()
         try:
             cursor = conn.cursor()
-
             cursor.execute(
                 "SELECT descargas, vip_hasta FROM usuarios WHERE user_id = ?",
                 (user_id,),
             )
             res = cursor.fetchone()
-
             ahora = datetime.now()
 
             if not res:
@@ -129,7 +131,6 @@ def verificar_estado_usuario(user_id):
                     vip_hasta = datetime.strptime(
                         vip_hasta_str, "%Y-%m-%d %H:%M:%S"
                     )
-
                     if ahora < vip_hasta:
                         dias_restantes = max(
                             1, (vip_hasta - ahora).days + 1
@@ -184,14 +185,12 @@ def activar_vip_15_dias(user_id):
         conn = obtener_conexion()
         try:
             ahora = datetime.now()
-
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT vip_hasta FROM usuarios WHERE user_id = ?",
                 (user_id,),
             )
             res = cursor.fetchone()
-
             fecha_base = ahora
 
             if res and res[0]:
@@ -217,7 +216,6 @@ def activar_vip_15_dias(user_id):
                 (user_id, fecha_str),
             )
             conn.commit()
-
             return fecha_str
         finally:
             conn.close()
@@ -265,7 +263,6 @@ def bajar_archivo(url, destino):
             allow_redirects=True,
         ) as req:
             req.raise_for_status()
-
             with open(destino, "wb") as f:
                 for chunk in req.iter_content(chunk_size=1024 * 1024):
                     if chunk:
@@ -289,7 +286,6 @@ def bajar_archivo(url, destino):
 def obtener_datos_tiktok(url):
     try:
         clean_url = url.split("?")[0].strip()
-
         headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -304,7 +300,6 @@ def obtener_datos_tiktok(url):
             headers=headers,
             timeout=20,
         )
-
         response.raise_for_status()
         resultado = response.json()
 
@@ -312,7 +307,6 @@ def obtener_datos_tiktok(url):
             return resultado.get("data") or {}
 
         print(f"TikTok API respondió: {resultado}")
-
     except Exception as e:
         print(f"Error TikTok API: {e}")
 
@@ -333,12 +327,9 @@ def extraer_shortcode_instagram(url):
 
 def descargar_instagram_instaloader(url):
     carpeta_destino = None
-
     try:
         shortcode = extraer_shortcode_instagram(url)
-
         if not shortcode:
-            print("No se encontró shortcode de Instagram.")
             return None, None
 
         carpeta_destino = os.path.abspath(
@@ -346,23 +337,12 @@ def descargar_instagram_instaloader(url):
         )
         os.makedirs(carpeta_destino, exist_ok=True)
 
-        post = instaloader.Post.from_shortcode(
-            L.context,
-            shortcode,
-        )
-
+        post = instaloader.Post.from_shortcode(L.context, shortcode)
         if not post.is_video:
-            print("La publicación de Instagram no contiene un video.")
             return None, carpeta_destino
 
-        L.download_post(
-            post,
-            target=carpeta_destino,
-        )
-
-        videos = glob.glob(
-            os.path.join(carpeta_destino, "*.mp4")
-        )
+        L.download_post(post, target=carpeta_destino)
+        videos = glob.glob(os.path.join(carpeta_destino, "*.mp4"))
 
         if videos:
             videos.sort(
@@ -371,9 +351,7 @@ def descargar_instagram_instaloader(url):
             )
             return videos[0], carpeta_destino
 
-        print("Instaloader no encontró ningún MP4.")
         return None, carpeta_destino
-
     except Exception as e:
         print(f"Error Instaloader: {e}")
         return None, carpeta_destino
@@ -382,21 +360,41 @@ def descargar_instagram_instaloader(url):
 def limpiar_carpeta(carpeta):
     if not carpeta:
         return
-
     try:
         if os.path.exists(carpeta):
             shutil.rmtree(carpeta, ignore_errors=True)
-
             padre = os.path.dirname(carpeta)
-            if (
-                padre
-                and os.path.isdir(padre)
-                and not os.listdir(padre)
-            ):
+            if padre and os.path.isdir(padre) and not os.listdir(padre):
                 os.rmdir(padre)
-
     except Exception as e:
-        print(f"Error limpiando archivos temporales: {e}")
+        print(f"Error limpiando archivos: {e}")
+
+
+def descargar_instagram(url):
+    os.makedirs("descargas", exist_ok=True)
+    clean_url = url.split("?")[0].strip()
+    item_id = os.urandom(6).hex()
+    salida = os.path.abspath(os.path.join("descargas", f"ig_{item_id}.mp4"))
+
+    opciones = {
+        "quiet": True,
+        "no_warnings": True,
+        "outtmpl": salida,
+        "format": "best[ext=mp4]/best",
+        "ffmpeg_location": FFMPEG_PATH,
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(opciones) as ydl:
+            ydl.download([clean_url])
+
+        if os.path.exists(salida) and os.path.getsize(salida) > 50 * 1024:
+            return salida, None
+    except Exception as e:
+        print(f"Error yt-dlp con Instagram: {e}")
+
+    archivo_loader, carpeta_temp = descargar_instagram_instaloader(clean_url)
+    return archivo_loader, carpeta_temp
 
 
 # ============================================================
@@ -418,6 +416,11 @@ def obtener_info_youtube(url):
             "no_warnings": True,
             "noplaylist": True,
             "skip_download": True,
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["android", "ios"]
+                }
+            },
         }
 
         with yt_dlp.YoutubeDL(opciones) as ydl:
@@ -433,26 +436,34 @@ def obtener_info_youtube(url):
             "duration": info.get("duration") or 0,
             "webpage_url": info.get("webpage_url") or url,
         }
-
     except Exception as e:
-        print(f"Error obteniendo información de YouTube: {e}")
+        print(f"Error obteniendo info de YouTube: {e}")
         return None
 
 
 def descargar_youtube(url, tipo, item_id):
     os.makedirs("descargas", exist_ok=True)
 
+    opciones_base = {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "ffmpeg_location": FFMPEG_PATH,
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "ios"]
+            }
+        }
+    }
+
     if tipo == "video":
         salida = os.path.abspath(
             os.path.join("descargas", f"youtube_{item_id}.mp4")
         )
-
         opciones = {
-            "quiet": True,
-            "no_warnings": True,
-            "noplaylist": True,
+            **opciones_base,
             "outtmpl": salida,
-            "format": "best[ext=mp4]/best",
+            "format": "best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
             "merge_output_format": "mp4",
         }
 
@@ -460,11 +471,8 @@ def descargar_youtube(url, tipo, item_id):
         salida = os.path.abspath(
             os.path.join("descargas", f"youtube_{item_id}.mp3")
         )
-
         opciones = {
-            "quiet": True,
-            "no_warnings": True,
-            "noplaylist": True,
+            **opciones_base,
             "outtmpl": salida,
             "format": "bestaudio/best",
             "postprocessors": [
@@ -475,7 +483,6 @@ def descargar_youtube(url, tipo, item_id):
                 }
             ],
         }
-
     else:
         return None
 
@@ -489,7 +496,6 @@ def descargar_youtube(url, tipo, item_id):
         candidatos = glob.glob(
             os.path.join("descargas", f"youtube_{item_id}.*")
         )
-
         if candidatos:
             candidatos.sort(
                 key=lambda x: os.path.getmtime(x),
@@ -522,11 +528,7 @@ def bienvenida(message):
         "👉 <b>Pega el enlace aquí abajo:</b>"
     )
 
-    bot.reply_to(
-        message,
-        texto,
-        parse_mode="HTML",
-    )
+    bot.reply_to(message, texto, parse_mode="HTML")
 
 
 # ============================================================
@@ -538,7 +540,6 @@ def dar_vip_comando(message):
         return
 
     partes = message.text.split()
-
     if len(partes) < 2:
         bot.reply_to(
             message,
@@ -575,10 +576,7 @@ def dar_vip_comando(message):
             print(f"No se pudo avisar al usuario VIP: {e}")
 
     except ValueError:
-        bot.reply_to(
-            message,
-            "❌ El ID debe ser un número entero.",
-        )
+        bot.reply_to(message, "❌ El ID debe ser un número entero.")
 
 
 # ============================================================
@@ -594,9 +592,7 @@ def recibir_enlace(message):
     user_id = message.from_user.id
     raw_text = message.text.strip()
 
-    # --------------------------------------------------------
-    # SUSCRIPCIÓN
-    # --------------------------------------------------------
+    # Suscripción
     if not esta_suscrito(user_id):
         markup = types.InlineKeyboardMarkup()
         markup.add(
@@ -605,7 +601,6 @@ def recibir_enlace(message):
                 url=CANAL_ENLACE,
             )
         )
-
         bot.reply_to(
             message,
             (
@@ -617,14 +612,10 @@ def recibir_enlace(message):
         )
         return
 
-    # --------------------------------------------------------
-    # LÍMITE / VIP
-    # --------------------------------------------------------
+    # Límite / VIP
     puede_descargar, tipo_usuario, _ = verificar_estado_usuario(user_id)
-
     if not puede_descargar:
         contacto_link = f"https://t.me/{ADMIN_USER.replace('@', '')}"
-
         markup = types.InlineKeyboardMarkup()
         markup.add(
             types.InlineKeyboardButton(
@@ -632,14 +623,12 @@ def recibir_enlace(message):
                 url=contacto_link,
             )
         )
-
         texto_bloqueo = (
             "❌ <b>Has alcanzado el límite de 2 descargas gratuitas.</b>\n\n"
             "🌟 <b>Pase VIP</b> (15 días de acceso ilimitado)\n"
             f"🆔 <b>Tu ID:</b> <code>{user_id}</code>\n\n"
             "Toca el botón para solicitar la activación."
         )
-
         bot.reply_to(
             message,
             texto_bloqueo,
@@ -648,9 +637,7 @@ def recibir_enlace(message):
         )
         return
 
-    # --------------------------------------------------------
-    # YOUTUBE
-    # --------------------------------------------------------
+    # YouTube
     if es_url_youtube(raw_text):
         msg_espera = bot.reply_to(
             message,
@@ -659,7 +646,6 @@ def recibir_enlace(message):
         )
 
         info = obtener_info_youtube(raw_text)
-
         if not info:
             bot.edit_message_text(
                 "❌ No se pudo procesar este enlace de YouTube.",
@@ -669,7 +655,6 @@ def recibir_enlace(message):
             return
 
         item_id = str(info.get("id") or os.urandom(6).hex())
-
         CACHE_ENLACES[item_id] = {
             "youtube": True,
             "url": info["url"],
@@ -680,7 +665,7 @@ def recibir_enlace(message):
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
             types.InlineKeyboardButton(
-                "▶️ Descargar Video",
+                "▶️️ Descargar Video",
                 callback_data=f"ytv_{item_id}",
             ),
             types.InlineKeyboardButton(
@@ -702,9 +687,7 @@ def recibir_enlace(message):
         )
         return
 
-    # --------------------------------------------------------
-    # TIKTOK
-    # --------------------------------------------------------
+    # TikTok
     if "tiktok.com" in raw_text.lower():
         msg_espera = bot.reply_to(
             message,
@@ -713,7 +696,6 @@ def recibir_enlace(message):
         )
 
         datos = obtener_datos_tiktok(raw_text)
-
         if not datos:
             bot.edit_message_text(
                 "❌ No se pudo procesar este enlace de TikTok.\n"
@@ -724,7 +706,6 @@ def recibir_enlace(message):
             return
 
         item_id = str(datos.get("id") or os.urandom(6).hex())
-
         CACHE_ENLACES[item_id] = {
             "video": datos.get("play") or datos.get("wmplay"),
             "audio": datos.get("music"),
@@ -758,9 +739,7 @@ def recibir_enlace(message):
         )
         return
 
-    # --------------------------------------------------------
-    # INSTAGRAM
-    # --------------------------------------------------------
+    # Instagram
     if "instagram.com" in raw_text.lower() or "instagr.am" in raw_text.lower():
         msg_espera = bot.reply_to(
             message,
@@ -768,7 +747,7 @@ def recibir_enlace(message):
             parse_mode="HTML",
         )
 
-        archivo_video, carpeta_borrar = descargar_instagram_instaloader(raw_text)
+        archivo_video, carpeta_borrar = descargar_instagram(raw_text)
 
         if archivo_video and os.path.exists(archivo_video):
             try:
@@ -813,15 +792,21 @@ def recibir_enlace(message):
                 except Exception:
                     pass
             finally:
-                limpiar_carpeta(carpeta_borrar)
+                if carpeta_borrar:
+                    limpiar_carpeta(carpeta_borrar)
+                if os.path.exists(archivo_video):
+                    try:
+                        os.remove(archivo_video)
+                    except Exception:
+                        pass
         else:
-            limpiar_carpeta(carpeta_borrar)
+            if carpeta_borrar:
+                limpiar_carpeta(carpeta_borrar)
+
             try:
                 bot.edit_message_text(
                     "❌ No se pudo descargar este video de Instagram.\n\n"
-                    "Puede que la publicación sea privada, "
-                    "que Instagram haya limitado la solicitud o "
-                    "que el enlace no sea compatible.",
+                    "Puede que la publicación sea privada o requiera iniciar sesión.",
                     chat_id=message.chat.id,
                     message_id=msg_espera.message_id,
                 )
@@ -829,9 +814,7 @@ def recibir_enlace(message):
                 pass
         return
 
-    # --------------------------------------------------------
-    # OTRA PLATAFORMA
-    # --------------------------------------------------------
+    # Otra plataforma
     bot.reply_to(
         message,
         (
@@ -850,12 +833,10 @@ def recibir_enlace(message):
 @bot.callback_query_handler(
     func=lambda call: call.data.startswith(("vid_", "aud_", "ytv_", "yta_"))
 )
-def procesar_seleccion_tiktok(call):
+def procesar_seleccion(call):
     user_id = call.from_user.id
 
-    # --------------------------------------------------------
-    # YOUTUBE
-    # --------------------------------------------------------
+    # YouTube
     if call.data.startswith(("ytv_", "yta_")):
         tipo_yt, item_id_yt = call.data.split("_", 1)
         info_yt = CACHE_ENLACES.get(item_id_yt)
@@ -863,7 +844,7 @@ def procesar_seleccion_tiktok(call):
         if not info_yt or not info_yt.get("youtube"):
             bot.answer_callback_query(
                 call.id,
-                "⚠️ Enlace expirado. Envíalo de nuevo.",
+                "⚠️️ Enlace expirado. Envíalo de nuevo.",
                 show_alert=True,
             )
             return
@@ -879,7 +860,6 @@ def procesar_seleccion_tiktok(call):
             return
 
         puede_descargar_yt, tipo_usuario_yt, _ = verificar_estado_usuario(user_id)
-
         if not puede_descargar_yt:
             bot.answer_callback_query(
                 call.id,
@@ -901,7 +881,6 @@ def procesar_seleccion_tiktok(call):
             pass
 
         archivo_yt = None
-
         try:
             tipo_descarga = "video" if tipo_yt == "ytv" else "audio"
             archivo_yt = descargar_youtube(
@@ -912,11 +891,7 @@ def procesar_seleccion_tiktok(call):
 
             if not archivo_yt or not os.path.exists(archivo_yt):
                 bot.edit_message_text(
-                    (
-                        "❌ No se pudo descargar el contenido de YouTube.\n\n"
-                        "Si estás usando MP3, asegúrate de tener FFmpeg "
-                        "instalado en el servidor."
-                    ),
+                    "❌ No se pudo descargar el contenido de YouTube.",
                     chat_id=call.message.chat.id,
                     message_id=call.message.message_id,
                 )
@@ -974,59 +949,36 @@ def procesar_seleccion_tiktok(call):
                 )
             except Exception:
                 pass
-
         finally:
             if archivo_yt and os.path.exists(archivo_yt):
                 try:
                     os.remove(archivo_yt)
                 except Exception:
                     pass
-
             CACHE_ENLACES.pop(item_id_yt, None)
-
         return
 
-    # --------------------------------------------------------
-    # TIKTOK (CALLBACK)
-    # --------------------------------------------------------
+    # TikTok
     try:
         tipo, item_id = call.data.split("_", 1)
     except ValueError:
-        bot.answer_callback_query(
-            call.id,
-            "❌ Solicitud inválida.",
-            show_alert=True,
-        )
+        bot.answer_callback_query(call.id, "❌ Solicitud inválida.", show_alert=True)
         return
 
     info = CACHE_ENLACES.get(item_id)
-
     if not info:
-        bot.answer_callback_query(
-            call.id,
-            "⚠️ Enlace expirado. Envíalo de nuevo.",
-            show_alert=True,
-        )
+        bot.answer_callback_query(call.id, "⚠️ Enlace expirado. Envíalo de nuevo.", show_alert=True)
         return
 
     creado = info.get("created")
     if creado and datetime.now() - creado > timedelta(minutes=30):
         CACHE_ENLACES.pop(item_id, None)
-        bot.answer_callback_query(
-            call.id,
-            "⚠️ Enlace expirado. Envíalo de nuevo.",
-            show_alert=True,
-        )
+        bot.answer_callback_query(call.id, "⚠️ Enlace expirado. Envíalo de nuevo.", show_alert=True)
         return
 
     puede_descargar, tipo_usuario, _ = verificar_estado_usuario(user_id)
-
     if not puede_descargar:
-        bot.answer_callback_query(
-            call.id,
-            "❌ Has alcanzado el límite gratuito.",
-            show_alert=True,
-        )
+        bot.answer_callback_query(call.id, "❌ Has alcanzado el límite gratuito.", show_alert=True)
         return
 
     bot.answer_callback_query(call.id)
@@ -1045,7 +997,6 @@ def procesar_seleccion_tiktok(call):
     archivo_local = None
 
     try:
-        # Video
         if tipo == "vid":
             video_url = info.get("video")
             if not video_url:
@@ -1082,10 +1033,7 @@ def procesar_seleccion_tiktok(call):
                     sumar_descarga(user_id)
 
                 try:
-                    bot.delete_message(
-                        call.message.chat.id,
-                        call.message.message_id,
-                    )
+                    bot.delete_message(call.message.chat.id, call.message.message_id)
                 except Exception:
                     pass
             else:
@@ -1095,7 +1043,6 @@ def procesar_seleccion_tiktok(call):
                     message_id=call.message.message_id,
                 )
 
-        # Audio
         elif tipo == "aud":
             audio_url = info.get("audio")
             if not audio_url:
@@ -1132,10 +1079,7 @@ def procesar_seleccion_tiktok(call):
                     sumar_descarga(user_id)
 
                 try:
-                    bot.delete_message(
-                        call.message.chat.id,
-                        call.message.message_id,
-                    )
+                    bot.delete_message(call.message.chat.id, call.message.message_id)
                 except Exception:
                     pass
             else:
@@ -1156,14 +1100,12 @@ def procesar_seleccion_tiktok(call):
             )
         except Exception:
             pass
-
     finally:
         if archivo_local and os.path.exists(archivo_local):
             try:
                 os.remove(archivo_local)
             except Exception:
                 pass
-
         CACHE_ENLACES.pop(item_id, None)
 
 
