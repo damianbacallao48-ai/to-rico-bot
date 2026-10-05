@@ -8,7 +8,7 @@ from telebot import TeleBot, types
 # ============================================================
 # CONFIGURACIÓN GENERAL
 # ============================================================
-BOT_TOKEN = "8998730541:AAGqFZjYSSyiHl_qu_Ow2wGz9yPQXX2p58Q"
+BOT_TOKEN = "8998730541:AAF8XH6WpLrP6SelBOtj_qHraw5sl3SMSgE"
 ADMIN_ID = 6731555041
 CANAL_ENLACE = "https://t.me/torico_cuba_db"
 ADMIN_USER = "@torico_cuba_db"
@@ -19,7 +19,6 @@ ADMIN_USER = "@torico_cuba_db"
 SMM_API_URL = "https://tuprioridadsmm.com/api/v2"
 SMM_API_KEY = "TU_API_KEY_DEL_PROVEEDOR"
 
-# Catálogo de servicios (precios por cada 1,000 unidades)
 SERVICIOS = {
     "tt_views": {
         "nombre": "🎵 TikTok - Vistas Rápidas",
@@ -436,7 +435,6 @@ def procesar_paso_compra(message):
 # ============================================================
 @bot.message_handler(commands=["recargar"])
 def cmd_recargar_admin(message):
-    """Comando exclusivo para el dueño: /recargar USER_ID MONTO"""
     if message.from_user.id != ADMIN_ID:
         return
 
