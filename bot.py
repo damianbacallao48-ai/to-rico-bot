@@ -8,7 +8,10 @@ from telebot import TeleBot, types
 # ============================================================
 # CONFIGURACIÓN GENERAL
 # ============================================================
+# Token oficial del nuevo bot @ImpulsoRedesPro_bot
 BOT_TOKEN = "8998730541:AAGqFZjYSSyiHl_qu_Ow2wGz9yPQXX2p58Q"
+os.environ["BOT_TOKEN"] = BOT_TOKEN  # Sobrescribe variables residuales en el servidor
+
 ADMIN_ID = 6731555041
 CANAL_ENLACE = "https://t.me/torico_cuba_db"
 ADMIN_USER = "@torico_cuba_db"
@@ -16,12 +19,10 @@ ADMIN_USER = "@torico_cuba_db"
 # ============================================================
 # CREDENCIALES DEL PROVEEDOR SMM MAYORISTA
 # ============================================================
-# Cuando te registres en un panel mayorista, colocas aquí su URL y API Key
 SMM_API_URL = "https://tuprioridadsmm.com/api/v2"
 SMM_API_KEY = "TU_API_KEY_DEL_PROVEEDOR"
 
 # Catálogo de servicios configurados
-# 'precio_por_1k': Lo que le cobras al cliente por cada 1,000 unidades en créditos/CUP
 SERVICIOS = {
     "tt_views": {
         "nombre": "🎵 TikTok - Vistas Rápidas",
