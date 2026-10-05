@@ -7,7 +7,7 @@ from flask import Flask
 from threading import Thread
 
 # --- CONFIGURACIÓN PRINCIPAL ---
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8998730541:AAE4p-o4lCvShtYy5alFEXnOFn5SCDmDtr0").strip()
+BOT_TOKEN = "8998730541:AAE4p-o4lCvShtYy5alFEXnOFn5SCDmDtR0"strip()
 ADMIN_ID = 6731555041
 
 # Panel SMM (JAP / JustAnotherPanel u otro compatible con API v2)
