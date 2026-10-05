@@ -16,9 +16,6 @@ from telebot import TeleBot, types
 # ============================================================
 # CONFIGURACIÓN
 # ============================================================
-# IMPORTANTE:
-# NO pongas aquí el token de Telegram.
-# Configúralo como variable de entorno BOT_TOKEN.
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
 if not BOT_TOKEN:
@@ -39,10 +36,10 @@ DB_FILE = "usuarios.db"
 bot = TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
-# Cache temporal de enlaces de TikTok.
+# Cache temporal de enlaces
 CACHE_ENLACES = {}
 
-# Evita problemas de concurrencia con SQLite.
+# Evita problemas de concurrencia con SQLite
 DB_LOCK = threading.RLock()
 
 # ============================================================
@@ -241,17 +238,12 @@ def esta_suscrito(user_id):
 
     try:
         miembro = bot.get_chat_member(CANAL_OBLIGATORIO, user_id)
-
         return miembro.status in (
             "creator",
             "administrator",
             "member",
         )
-
     except Exception as e:
-        # IMPORTANTE:
-        # Si Telegram no puede comprobar la membresía,
-        # NO damos acceso automáticamente.
         print(f"Error comprobando suscripción de {user_id}: {e}")
         return False
 
@@ -289,13 +281,11 @@ def bajar_archivo(url, destino):
 
     except Exception as e:
         print(f"Error descargando archivo: {e}")
-
         try:
             if os.path.exists(destino):
                 os.remove(destino)
         except Exception:
             pass
-
         return False
 
 
@@ -344,7 +334,6 @@ def extraer_shortcode_instagram(url):
         url,
         re.IGNORECASE,
     )
-
     return match.group(1) if match else None
 
 
@@ -404,7 +393,6 @@ def limpiar_carpeta(carpeta):
         if os.path.exists(carpeta):
             shutil.rmtree(carpeta, ignore_errors=True)
 
-            # Limpia la carpeta padre si quedó vacía.
             padre = os.path.dirname(carpeta)
             if (
                 padre
@@ -415,7 +403,6 @@ def limpiar_carpeta(carpeta):
 
     except Exception as e:
         print(f"Error limpiando archivos temporales: {e}")
-
 
 
 # ============================================================
@@ -505,7 +492,6 @@ def descargar_youtube(url, tipo, item_id):
         if os.path.exists(salida):
             return salida
 
-        # yt-dlp puede cambiar la extensión/nombre durante el postprocesado.
         candidatos = glob.glob(
             os.path.join("descargas", f"youtube_{item_id}.*")
         )
@@ -529,14 +515,14 @@ def descargar_youtube(url, tipo, item_id):
 @bot.message_handler(commands=["start"])
 def bienvenida(message):
     user_id = message.from_user.id
-
     _, _, texto_estado = verificar_estado_usuario(user_id)
 
     texto = (
         "⚡ <b>¡Bienvenido al Descargador Pro!</b>\n\n"
         "Envía el enlace de cualquier video:\n"
         "• 🎵 <b>TikTok</b> (Video HD sin marca o Audio MP3)\n"
-        "• 📸 <b>Instagram</b> (Reels y Posts en video)\n• ▶️ <b>YouTube</b> (Video y MP3)\n\n"
+        "• 📸 <b>Instagram</b> (Reels y Posts en video)\n"
+        "• ▶️ <b>YouTube</b> (Video y MP3)\n\n"
         f"📊 <b>Tu plan:</b> <code>{texto_estado}</code>\n"
         f"🆔 <b>Tu ID:</b> <code>{user_id}</code>\n\n"
         "👉 <b>Pega el enlace aquí abajo:</b>"
@@ -569,7 +555,6 @@ def dar_vip_comando(message):
 
     try:
         target_id = int(partes[1])
-
         fecha_fin = activar_vip_15_dias(target_id)
 
         bot.reply_to(
@@ -644,9 +629,7 @@ def recibir_enlace(message):
     puede_descargar, tipo_usuario, _ = verificar_estado_usuario(user_id)
 
     if not puede_descargar:
-        contacto_link = (
-            f"https://t.me/{ADMIN_USER.replace('@', '')}"
-        )
+        contacto_link = f"https://t.me/{ADMIN_USER.replace('@', '')}"
 
         markup = types.InlineKeyboardMarkup()
         markup.add(
@@ -701,7 +684,6 @@ def recibir_enlace(message):
         }
 
         markup = types.InlineKeyboardMarkup(row_width=2)
-
         markup.add(
             types.InlineKeyboardButton(
                 "▶️ Descargar Video",
@@ -715,12 +697,8 @@ def recibir_enlace(message):
 
         bot.edit_message_text(
             (
-                "🎬 <b>Video encontrado</b>
-
-"
-                f"📌 <b>{info['title'][:100]}</b>
-
-"
+                "🎬 <b>Video encontrado</b>\n\n"
+                f"📌 <b>{info['title'][:100]}</b>\n\n"
                 "¿Qué deseas descargar?"
             ),
             chat_id=message.chat.id,
@@ -728,7 +706,6 @@ def recibir_enlace(message):
             reply_markup=markup,
             parse_mode="HTML",
         )
-
         return
 
     # --------------------------------------------------------
@@ -752,9 +729,7 @@ def recibir_enlace(message):
             )
             return
 
-        item_id = str(
-            datos.get("id") or os.urandom(6).hex()
-        )
+        item_id = str(datos.get("id") or os.urandom(6).hex())
 
         CACHE_ENLACES[item_id] = {
             "video": datos.get("play") or datos.get("wmplay"),
@@ -763,32 +738,21 @@ def recibir_enlace(message):
             "created": datetime.now(),
         }
 
-        # Evitar que la cache crezca indefinidamente.
         if len(CACHE_ENLACES) > 200:
             elementos = list(CACHE_ENLACES.items())
-
-            elementos.sort(
-                key=lambda x: x[1].get(
-                    "created",
-                    datetime.min,
-                )
-            )
-
+            elementos.sort(key=lambda x: x[1].get("created", datetime.min))
             for key, _ in elementos[:50]:
                 CACHE_ENLACES.pop(key, None)
 
         markup = types.InlineKeyboardMarkup(row_width=2)
-
         btn_video = types.InlineKeyboardButton(
             "🎬 Descargar Video",
             callback_data=f"vid_{item_id}",
         )
-
         btn_audio = types.InlineKeyboardButton(
             "🎵 Descargar MP3",
             callback_data=f"aud_{item_id}",
         )
-
         markup.add(btn_video, btn_audio)
 
         bot.edit_message_text(
@@ -798,25 +762,19 @@ def recibir_enlace(message):
             reply_markup=markup,
             parse_mode="HTML",
         )
-
         return
 
     # --------------------------------------------------------
     # INSTAGRAM
     # --------------------------------------------------------
-    if (
-        "instagram.com" in raw_text.lower()
-        or "instagr.am" in raw_text.lower()
-    ):
+    if "instagram.com" in raw_text.lower() or "instagr.am" in raw_text.lower():
         msg_espera = bot.reply_to(
             message,
             "⏳ <b>Descargando de Instagram...</b>",
             parse_mode="HTML",
         )
 
-        archivo_video, carpeta_borrar = (
-            descargar_instagram_instaloader(raw_text)
-        )
+        archivo_video, carpeta_borrar = descargar_instagram_instaloader(raw_text)
 
         if archivo_video and os.path.exists(archivo_video):
             try:
@@ -852,7 +810,6 @@ def recibir_enlace(message):
 
             except Exception as e:
                 print(f"Error enviando Instagram: {e}")
-
                 try:
                     bot.edit_message_text(
                         "❌ Error enviando el video a Telegram.",
@@ -861,13 +818,10 @@ def recibir_enlace(message):
                     )
                 except Exception:
                     pass
-
             finally:
                 limpiar_carpeta(carpeta_borrar)
-
         else:
             limpiar_carpeta(carpeta_borrar)
-
             try:
                 bot.edit_message_text(
                     "❌ No se pudo descargar este video de Instagram.\n\n"
@@ -879,7 +833,6 @@ def recibir_enlace(message):
                 )
             except Exception:
                 pass
-
         return
 
     # --------------------------------------------------------
@@ -890,14 +843,15 @@ def recibir_enlace(message):
         (
             "💡 <b>Plataformas compatibles actualmente:</b>\n\n"
             "• 🎵 <b>TikTok</b> — Video y MP3\n"
-            "• 📸 <b>Instagram</b> — Reels y Posts en video\n            "• ▶️ <b>YouTube</b> — Video y MP3"
+            "• 📸 <b>Instagram</b> — Reels y Posts en video\n"
+            "• ▶️ <b>YouTube</b> — Video y MP3"
         ),
         parse_mode="HTML",
     )
 
 
 # ============================================================
-# BOTONES DE TIKTOK
+# BOTONES CALLBACK
 # ============================================================
 @bot.callback_query_handler(
     func=lambda call: call.data.startswith(("vid_", "aud_", "ytv_", "yta_"))
@@ -965,9 +919,7 @@ def procesar_seleccion_tiktok(call):
             if not archivo_yt or not os.path.exists(archivo_yt):
                 bot.edit_message_text(
                     (
-                        "❌ No se pudo descargar el contenido de YouTube.
-
-"
+                        "❌ No se pudo descargar el contenido de YouTube.\n\n"
                         "Si estás usando MP3, asegúrate de tener FFmpeg "
                         "instalado en el servidor."
                     ),
@@ -990,8 +942,7 @@ def procesar_seleccion_tiktok(call):
                         f,
                         supports_streaming=True,
                         caption=(
-                            "▶️ <b>Video de YouTube listo</b>
-"
+                            "▶️ <b>Video de YouTube listo</b>\n"
                             "📢 <b>Canal:</b> @torico_cuba_db"
                         ),
                         parse_mode="HTML",
@@ -1002,8 +953,7 @@ def procesar_seleccion_tiktok(call):
                         f,
                         title=info_yt.get("title", "Audio de YouTube")[:40],
                         caption=(
-                            "🎵 <b>Audio de YouTube listo</b>
-"
+                            "🎵 <b>Audio de YouTube listo</b>\n"
                             "📢 <b>Canal:</b> @torico_cuba_db"
                         ),
                         parse_mode="HTML",
@@ -1042,6 +992,9 @@ def procesar_seleccion_tiktok(call):
 
         return
 
+    # --------------------------------------------------------
+    # TIKTOK (CALLBACK)
+    # --------------------------------------------------------
     try:
         tipo, item_id = call.data.split("_", 1)
     except ValueError:
@@ -1062,23 +1015,17 @@ def procesar_seleccion_tiktok(call):
         )
         return
 
-    # Expiración de 30 minutos.
     creado = info.get("created")
+    if creado and datetime.now() - creado > timedelta(minutes=30):
+        CACHE_ENLACES.pop(item_id, None)
+        bot.answer_callback_query(
+            call.id,
+            "⚠️ Enlace expirado. Envíalo de nuevo.",
+            show_alert=True,
+        )
+        return
 
-    if creado:
-        if datetime.now() - creado > timedelta(minutes=30):
-            CACHE_ENLACES.pop(item_id, None)
-
-            bot.answer_callback_query(
-                call.id,
-                "⚠️ Enlace expirado. Envíalo de nuevo.",
-                show_alert=True,
-            )
-            return
-
-    puede_descargar, tipo_usuario, _ = verificar_estado_usuario(
-        user_id
-    )
+    puede_descargar, tipo_usuario, _ = verificar_estado_usuario(user_id)
 
     if not puede_descargar:
         bot.answer_callback_query(
@@ -1101,16 +1048,12 @@ def procesar_seleccion_tiktok(call):
         pass
 
     os.makedirs("descargas", exist_ok=True)
-
     archivo_local = None
 
     try:
-        # ----------------------------------------------------
-        # VIDEO
-        # ----------------------------------------------------
+        # Video
         if tipo == "vid":
             video_url = info.get("video")
-
             if not video_url:
                 bot.edit_message_text(
                     "❌ TikTok no proporcionó un enlace de video.",
@@ -1119,10 +1062,7 @@ def procesar_seleccion_tiktok(call):
                 )
                 return
 
-            archivo_local = os.path.join(
-                "descargas",
-                f"{item_id}.mp4",
-            )
+            archivo_local = os.path.join("descargas", f"{item_id}.mp4")
 
             if bajar_archivo(video_url, archivo_local):
                 bot.edit_message_text(
@@ -1154,7 +1094,6 @@ def procesar_seleccion_tiktok(call):
                     )
                 except Exception:
                     pass
-
             else:
                 bot.edit_message_text(
                     "❌ No se pudo descargar el video.",
@@ -1162,12 +1101,9 @@ def procesar_seleccion_tiktok(call):
                     message_id=call.message.message_id,
                 )
 
-        # ----------------------------------------------------
-        # AUDIO
-        # ----------------------------------------------------
+        # Audio
         elif tipo == "aud":
             audio_url = info.get("audio")
-
             if not audio_url:
                 bot.edit_message_text(
                     "❌ TikTok no proporcionó un enlace de audio.",
@@ -1176,10 +1112,7 @@ def procesar_seleccion_tiktok(call):
                 )
                 return
 
-            archivo_local = os.path.join(
-                "descargas",
-                f"{item_id}.mp3",
-            )
+            archivo_local = os.path.join("descargas", f"{item_id}.mp3")
 
             if bajar_archivo(audio_url, archivo_local):
                 bot.edit_message_text(
@@ -1193,10 +1126,7 @@ def procesar_seleccion_tiktok(call):
                     bot.send_audio(
                         call.message.chat.id,
                         f,
-                        title=(
-                            info.get("title")
-                            or "Audio de TikTok"
-                        )[:40],
+                        title=(info.get("title") or "Audio de TikTok")[:40],
                         caption=(
                             "🎵 <b>Audio extraído con éxito</b>\n"
                             "📢 <b>Canal:</b> @torico_cuba_db"
@@ -1214,7 +1144,6 @@ def procesar_seleccion_tiktok(call):
                     )
                 except Exception:
                     pass
-
             else:
                 bot.edit_message_text(
                     "❌ No se pudo extraer el audio.",
@@ -1224,7 +1153,6 @@ def procesar_seleccion_tiktok(call):
 
     except Exception as e:
         print(f"Error procesando TikTok: {e}")
-
         try:
             bot.edit_message_text(
                 "❌ Ocurrió un error al enviar el archivo.\n"
@@ -1242,7 +1170,6 @@ def procesar_seleccion_tiktok(call):
             except Exception:
                 pass
 
-        # El enlace ya no es necesario después de procesarlo.
         CACHE_ENLACES.pop(item_id, None)
 
 
