@@ -8,7 +8,7 @@ from telebot import TeleBot, types
 # ============================================================
 # CONFIGURACIÓN GENERAL
 # ============================================================
-BOT_TOKEN = "8875681851:AAF-LUfVC7MoSW_Mwxva82NVxVnaknQpAfU"
+BOT_TOKEN = "8998730541:AAGqFZjYSSyiHl_qu_Ow2wGz9yPQXX2p58Q"
 ADMIN_ID = 6731555041
 CANAL_ENLACE = "https://t.me/torico_cuba_db"
 ADMIN_USER = "@torico_cuba_db"
@@ -184,7 +184,6 @@ def registrar_pedido(user_id, servicio_clave, enlace, cantidad, costo, id_extern
 # ============================================================
 def enviar_orden_mayorista(service_id, enlace, cantidad):
     if SMM_API_KEY == "TU_API_KEY_DEL_PROVEEDOR":
-        # Simulación local si aún no se conecta una API real
         orden_ficticia = f"DEMO-{os.urandom(4).hex().upper()}"
         return True, orden_ficticia
 
