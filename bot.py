@@ -19,7 +19,6 @@ CALLMEBOT_APIKEY = ""
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# --- DATOS DE COBRO Y CONTACTO ---
 DATOS_PAGO = {
     "tarjeta": "9238 1299 7952 7274",
     "titular": "Daemon",
@@ -37,7 +36,10 @@ def enviar_whatsapp(texto):
     except Exception:
         pass
 
-# --- CATÁLOGO COMPLETO DE OFERTAS ---
+def limpiar_link(link):
+    # Remueve parámetros sobrantes de seguimiento (como ?stkn=...)
+    return link.split("?")[0].strip()
+
 PAQUETES = {
     # INSTAGRAM
     "ig_likes": {
@@ -130,7 +132,7 @@ PAQUETES = {
 user_sessions = {}
 pedidos_pendientes = {}
 
-# --- SERVIDOR WEB (RAILWAY) ---
+# --- SERVIDOR WEB ---
 app = Flask(__name__)
 
 @app.route('/')
@@ -167,7 +169,7 @@ def handle_soporte(call):
         "💬 *Atención al Cliente y Soporte*\n\n"
         f"👤 Contacto directo: [@{DATOS_PAGO['telegram_contacto']}](https://t.me/{DATOS_PAGO['telegram_contacto']})\n"
         f"📱 Móvil / WhatsApp: `{DATOS_PAGO['telefono']}`\n\n"
-        "Escríbenos si tienes dudas con transferencias, pedidos especiales o verificación."
+        "Escríbenos si tienes dudas con transferencias o pedidos personalizados."
     )
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("💬 Escribir al Privado", url=f"https://t.me/{DATOS_PAGO['telegram_contacto']}"))
@@ -211,8 +213,8 @@ def handle_buy(call):
     if pkg["tipo"] == "manual":
         texto = (
             "🔹 *Servicio de Verificación (Palomita Azul)*\n\n"
-            "Este trámite requiere evaluación manual de perfil y requisitos específicos.\n\n"
-            f"Por favor contacta directamente al administrador para cotizar tu caso:\n"
+            "Este trámite requiere evaluación manual de perfil.\n\n"
+            f"Por favor contacta directamente al administrador:\n"
             f"👉 [@{DATOS_PAGO['telegram_contacto']}](https://t.me/{DATOS_PAGO['telegram_contacto']})"
         )
         markup = types.InlineKeyboardMarkup()
@@ -246,7 +248,7 @@ def handle_buy(call):
 @bot.message_handler(func=lambda msg: str(msg.from_user.id) in user_sessions and user_sessions[str(msg.from_user.id)].get("step") in ["AWAIT_LINK", "AWAIT_COMBO_LINK"])
 def handle_link_input(message):
     user_id = str(message.from_user.id)
-    link = message.text.strip()
+    link = limpiar_link(message.text)
 
     if not link.startswith("http"):
         bot.reply_to(message, "⚠️ El enlace debe comenzar con `http://` o `https://`. Inténtalo de nuevo:")
@@ -347,6 +349,7 @@ def handle_admin_decision(call):
     if action == "app":
         bot.answer_callback_query(call.id, "Enviando a JAP...")
         ordenes_creadas = []
+        errores_jap = []
 
         if pkg["tipo"] == "simple":
             payload = {
@@ -360,8 +363,10 @@ def handle_admin_decision(call):
                 res = requests.post(API_URL, data=payload, timeout=20).json()
                 if "order" in res:
                     ordenes_creadas.append(str(res["order"]))
-            except Exception:
-                pass
+                else:
+                    errores_jap.append(res.get("error", str(res)))
+            except Exception as e:
+                errores_jap.append(str(e))
         else:
             for idx, sub in enumerate(pkg["subservicios"]):
                 payload = {
@@ -375,8 +380,10 @@ def handle_admin_decision(call):
                     res = requests.post(API_URL, data=payload, timeout=20).json()
                     if "order" in res:
                         ordenes_creadas.append(f"{sub['label']}: #{res['order']}")
-                except Exception:
-                    pass
+                    else:
+                        errores_jap.append(f"{sub['label']}: {res.get('error', str(res))}")
+                except Exception as e:
+                    errores_jap.append(str(e))
 
         if ordenes_creadas:
             ids_str = ", ".join(ordenes_creadas)
@@ -395,7 +402,8 @@ def handle_admin_decision(call):
                 parse_mode="Markdown"
             )
         else:
-            bot.send_message(ADMIN_ID, "⚠️ Ocurrió un error al enviar a JAP (posible falta de saldo en tu panel).")
+            detalles = " | ".join(errores_jap) if errores_jap else "Desconocido"
+            bot.send_message(ADMIN_ID, f"⚠️ *JAP devolvió este error:* `{detalles}`", parse_mode="Markdown")
 
     elif action == "rej":
         bot.answer_callback_query(call.id, "Pedido rechazado.")
