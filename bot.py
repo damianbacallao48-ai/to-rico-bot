@@ -19,6 +19,7 @@ ADMIN_USER = "@torico_cuba_db"
 SMM_API_URL = "https://tuprioridadsmm.com/api/v2"
 SMM_API_KEY = "TU_API_KEY_DEL_PROVEEDOR"
 
+# Catálogo de servicios configurados
 SERVICIOS = {
     "tt_views": {
         "nombre": "🎵 TikTok - Vistas Rápidas",
@@ -345,7 +346,7 @@ def volver_inicio(call):
 # ============================================================
 # PROCESAMIENTO DE TEXTO (ENLACE Y CANTIDAD)
 # ============================================================
-@bot.message_handler(func=lambda m: m.from_user.id in SESION_COMPRA)
+@bot.message_handler(func=lambda m: m.from_user.id in SESION_COMPRA and not m.text.startswith("/"))
 def procesar_paso_compra(message):
     user_id = message.from_user.id
     estado = SESION_COMPRA.get(user_id)
@@ -353,7 +354,7 @@ def procesar_paso_compra(message):
 
     if estado["paso"] == "esperando_enlace":
         if not ("http://" in texto or "https://" in texto):
-            bot.reply_to(message, "⚠️ Envía un enlace válido que empiece por https://")
+            bot.reply_to(message, "⚠️ Envía un enlace válido que empiece por https:// o usa /cancelar para salir.")
             return
 
         estado["enlace"] = texto
@@ -428,6 +429,16 @@ def procesar_paso_compra(message):
             )
 
         SESION_COMPRA.pop(user_id, None)
+
+
+@bot.message_handler(commands=["cancelar"])
+def cmd_cancelar(message):
+    user_id = message.from_user.id
+    if user_id in SESION_COMPRA:
+        SESION_COMPRA.pop(user_id, None)
+        bot.reply_to(message, "🚫 Operación cancelada. Escribe /start para volver al inicio.")
+    else:
+        bot.reply_to(message, "No tienes ninguna compra en proceso.")
 
 
 # ============================================================
