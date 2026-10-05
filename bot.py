@@ -241,7 +241,7 @@ def esta_suscrito(user_id):
 
 
 # ============================================================
-# DESCARGA HTTP
+# DESCARGA HTTP DIRECTA
 # ============================================================
 def bajar_archivo(url, destino):
     if not url:
@@ -250,7 +250,8 @@ def bajar_archivo(url, destino):
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 Chrome/140 Safari/537.36"
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/140.0.0.0 Safari/537.36"
         )
     }
 
@@ -271,7 +272,7 @@ def bajar_archivo(url, destino):
         return os.path.exists(destino) and os.path.getsize(destino) > 50 * 1024
 
     except Exception as e:
-        print(f"Error descargando archivo: {e}")
+        print(f"Error descargando archivo HTTP: {e}")
         try:
             if os.path.exists(destino):
                 os.remove(destino)
@@ -281,7 +282,7 @@ def bajar_archivo(url, destino):
 
 
 # ============================================================
-# TIKTOK
+# TIKTOK (INTACTO)
 # ============================================================
 def obtener_datos_tiktok(url):
     try:
@@ -314,7 +315,7 @@ def obtener_datos_tiktok(url):
 
 
 # ============================================================
-# INSTAGRAM
+# INSTAGRAM (OPTIMIZADO CON API Y YT-DLP)
 # ============================================================
 def extraer_shortcode_instagram(url):
     match = re.search(
@@ -376,12 +377,41 @@ def descargar_instagram(url):
     item_id = os.urandom(6).hex()
     salida = os.path.abspath(os.path.join("descargas", f"ig_{item_id}.mp4"))
 
+    # Método 1: API externa que evade bloqueos de IP
+    try:
+        api_url = "https://vkrdownloader.org/server/"
+        params = {"api_key": "vkrdownloader", "vkr": clean_url}
+        resp = requests.get(api_url, params=params, timeout=20)
+        if resp.status_code == 200:
+            datos = resp.json()
+            formatos = datos.get("formats") or []
+            video_url = None
+            for fmt in formatos:
+                if fmt.get("url") and fmt.get("ext") == "mp4":
+                    video_url = fmt["url"]
+                    break
+            if not video_url and datos.get("source"):
+                video_url = datos.get("source")
+
+            if video_url and bajar_archivo(video_url, salida):
+                return salida, None
+    except Exception as e:
+        print(f"Fallo método API directa de Instagram: {e}")
+
+    # Método 2: yt-dlp con User-Agent móvil
     opciones = {
         "quiet": True,
         "no_warnings": True,
         "outtmpl": salida,
         "format": "best[ext=mp4]/best",
         "ffmpeg_location": FFMPEG_PATH,
+        "http_headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+                "AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 "
+                "Instagram 300.0.0.0"
+            )
+        },
     }
 
     try:
@@ -393,12 +423,13 @@ def descargar_instagram(url):
     except Exception as e:
         print(f"Error yt-dlp con Instagram: {e}")
 
+    # Método 3: Instaloader de respaldo
     archivo_loader, carpeta_temp = descargar_instagram_instaloader(clean_url)
     return archivo_loader, carpeta_temp
 
 
 # ============================================================
-# YOUTUBE
+# YOUTUBE (INTACTO - TAL CUAL COMO TE FUNCIONÓ)
 # ============================================================
 def es_url_youtube(url):
     url_lower = url.lower()
@@ -626,7 +657,7 @@ def recibir_enlace(message):
         )
         return
 
-    # YouTube
+    # YouTube (INTACTO)
     if es_url_youtube(raw_text):
         msg_espera = bot.reply_to(
             message,
@@ -676,7 +707,7 @@ def recibir_enlace(message):
         )
         return
 
-    # TikTok
+    # TikTok (INTACTO)
     if "tiktok.com" in raw_text.lower():
         msg_espera = bot.reply_to(
             message,
@@ -817,7 +848,7 @@ def recibir_enlace(message):
 
 
 # ============================================================
-# BOTONES CALLBACK
+# BOTONES CALLBACK (INTACTOS PARA YOUTUBE Y TIKTOK)
 # ============================================================
 @bot.callback_query_handler(
     func=lambda call: call.data.startswith(("vid_", "aud_", "ytv_", "yta_"))
@@ -825,7 +856,7 @@ def recibir_enlace(message):
 def procesar_seleccion(call):
     user_id = call.from_user.id
 
-    # YouTube
+    # YouTube (INTACTO)
     if call.data.startswith(("ytv_", "yta_")):
         tipo_yt, item_id_yt = call.data.split("_", 1)
         info_yt = CACHE_ENLACES.get(item_id_yt)
@@ -947,7 +978,7 @@ def procesar_seleccion(call):
             CACHE_ENLACES.pop(item_id_yt, None)
         return
 
-    # TikTok
+    # TikTok (INTACTO)
     try:
         tipo, item_id = call.data.split("_", 1)
     except ValueError:
