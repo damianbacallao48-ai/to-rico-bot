@@ -8,54 +8,53 @@ from telebot import TeleBot, types
 # ============================================================
 # CONFIGURACIÓN GENERAL
 # ============================================================
-BOT_TOKEN = "PEGA_AQUI_TU_BOT_TOKEN"
-ADMIN_ID = 6731555041  # Tu ID de Telegram
+BOT_TOKEN = "8875681851:AAF-LUfVC7MoSW_Mwxva82NVxVnaknQpAfU"
+ADMIN_ID = 6731555041
 CANAL_ENLACE = "https://t.me/torico_cuba_db"
 ADMIN_USER = "@torico_cuba_db"
 
 # ============================================================
 # CREDENCIALES DEL PROVEEDOR SMM MAYORISTA
 # ============================================================
-# Cambia esta URL por la API de tu proveedor SMM elegido
+# Cuando te registres en un panel mayorista, colocas aquí su URL y API Key
 SMM_API_URL = "https://tuprioridadsmm.com/api/v2"
 SMM_API_KEY = "TU_API_KEY_DEL_PROVEEDOR"
 
 # Catálogo de servicios configurados
-# 'service_id' es el ID que tiene ese servicio en tu panel proveedor
-# 'costo_base' es el precio que le cobras al cliente por cada 1,000 unidades (en créditos o CUP)
+# 'precio_por_1k': Lo que le cobras al cliente por cada 1,000 unidades en créditos/CUP
 SERVICIOS = {
     "tt_views": {
         "nombre": "🎵 TikTok - Vistas Rápidas",
         "service_id": 101,
-        "precio_por_1k": 50,  # Cobras 50 créditos/CUP por cada 1,000 vistas
+        "precio_por_1k": 50.0,
         "min": 100,
         "max": 50000,
     },
     "tt_likes": {
         "nombre": "❤️ TikTok - Likes Reales",
         "service_id": 102,
-        "precio_por_1k": 150,
+        "precio_por_1k": 150.0,
         "min": 50,
         "max": 10000,
     },
     "ig_views": {
         "nombre": "📸 Instagram - Vistas Reels",
         "service_id": 201,
-        "precio_por_1k": 60,
+        "precio_por_1k": 60.0,
         "min": 100,
         "max": 50000,
     },
     "ig_likes": {
         "nombre": "❤️ Instagram - Likes",
         "service_id": 202,
-        "precio_por_1k": 180,
+        "precio_por_1k": 180.0,
         "min": 50,
         "max": 10000,
     },
     "yt_views": {
         "nombre": "▶️ YouTube - Vistas / Shorts",
         "service_id": 301,
-        "precio_por_1k": 200,
+        "precio_por_1k": 200.0,
         "min": 500,
         "max": 20000,
     },
@@ -67,7 +66,6 @@ DB_LOCK = threading.RLock()
 bot = TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
-# Diccionario temporal para guardar el flujo de compra por usuario
 SESION_COMPRA = {}
 
 
@@ -185,7 +183,11 @@ def registrar_pedido(user_id, servicio_clave, enlace, cantidad, costo, id_extern
 # CONEXIÓN CON API MAYORISTA SMM
 # ============================================================
 def enviar_orden_mayorista(service_id, enlace, cantidad):
-    """Envía la orden a la API estándar de paneles SMM v2"""
+    if SMM_API_KEY == "TU_API_KEY_DEL_PROVEEDOR":
+        # Simulación local si aún no se conecta una API real
+        orden_ficticia = f"DEMO-{os.urandom(4).hex().upper()}"
+        return True, orden_ficticia
+
     try:
         payload = {
             "key": SMM_API_KEY,
@@ -198,7 +200,7 @@ def enviar_orden_mayorista(service_id, enlace, cantidad):
         datos = res.json()
         if "order" in datos:
             return True, datos["order"]
-        return False, datos.get("error", "Error desconocido del proveedor")
+        return False, datos.get("error", "Error del panel mayorista")
     except Exception as e:
         print(f"Fallo contactando API mayorista: {e}")
         return False, str(e)
@@ -234,7 +236,7 @@ def mostrar_servicios(call):
     markup = types.InlineKeyboardMarkup()
     for clave, s in SERVICIOS.items():
         btn = types.InlineKeyboardButton(
-            f"{s['nombre']} (${s['precio_por_1k']}/1k)",
+            f"{s['nombre']} (${s['precio_por_1k']:.0f}/1k)",
             callback_data=f"sel_{clave}",
         )
         markup.add(btn)
@@ -263,7 +265,7 @@ def iniciar_flujo_pedido(call):
 
     texto = (
         f"📌 <b>Has seleccionado:</b> {servicio['nombre']}\n\n"
-        f"💵 <b>Precio:</b> ${servicio['precio_por_1k']} créditos por cada 1,000 unidades.\n"
+        f"💵 <b>Precio:</b> ${servicio['precio_por_1k']:.2f} por cada 1,000 unidades.\n"
         f"📊 <b>Mínimo:</b> {servicio['min']} | <b>Máximo:</b> {servicio['max']}\n\n"
         "👉 <b>Envía ahora el enlace (URL) de tu video o perfil:</b>"
     )
@@ -282,8 +284,8 @@ def ver_cuenta(call):
     texto = (
         "👤 <b>Estado de tu Cuenta</b>\n\n"
         f"🆔 <b>ID de Usuario:</b> <code>{user_id}</code>\n"
-        f"💰 <b>Saldo disponible:</b> <code>${saldo:.2f}</code>\n"
-        f"📊 <b>Total invertido:</b> <code>${gastado:.2f}</code>\n"
+        f"💰 <b>Saldo disponible:</b> <code>${saldo:.2f} créditos</code>\n"
+        f"📊 <b>Total invertido:</b> <code>${gastado:.2f} créditos</code>\n"
     )
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("🔙 Volver", callback_data="menu_inicio"))
@@ -394,8 +396,8 @@ def procesar_paso_compra(message):
                 message,
                 (
                     f"❌ <b>Saldo insuficiente.</b>\n\n"
-                    f"Costo del pedido: <b>${costo:.2f}</b>\n"
-                    f"Tu saldo: <b>${saldo_actual:.2f}</b>\n\n"
+                    f"Costo del pedido: <b>${costo:.2f} créditos</b>\n"
+                    f"Tu saldo: <b>${saldo_actual:.2f} créditos</b>\n\n"
                     "Recarga saldo en el menú principal para procesar esta orden."
                 ),
                 parse_mode="HTML",
@@ -403,8 +405,7 @@ def procesar_paso_compra(message):
             SESION_COMPRA.pop(user_id, None)
             return
 
-        # Confirmar y procesar con proveedor mayorista
-        msg_espera = bot.reply_to(message, "⏳ <b>Procesando orden con el servidor...</b>", parse_mode="HTML")
+        msg_espera = bot.reply_to(message, "⏳ <b>Procesando orden...</b>", parse_mode="HTML")
         exito, resultado = enviar_orden_mayorista(s["service_id"], estado["enlace"], cantidad)
 
         if exito:
@@ -414,7 +415,7 @@ def procesar_paso_compra(message):
                     "🎉 <b>¡Orden enviada con éxito!</b>\n\n"
                     f"📌 <b>Servicio:</b> {s['nombre']}\n"
                     f"🔢 <b>Cantidad:</b> {cantidad}\n"
-                    f"💰 <b>Total descontado:</b> ${costo:.2f}\n"
+                    f"💰 <b>Total descontado:</b> ${costo:.2f} créditos\n"
                     f"🔖 <b>ID de Orden:</b> <code>{resultado}</code>\n\n"
                     "El servicio comenzará a reflejarse en los próximos minutos."
                 ),
@@ -424,7 +425,7 @@ def procesar_paso_compra(message):
             )
         else:
             bot.edit_message_text(
-                f"❌ Error al procesar con el proveedor: <code>{resultado}</code>\nNo se ha descontado ningún saldo.",
+                f"❌ Error al procesar con el proveedor: <code>{resultado}</code>\nNo se ha descontado saldo.",
                 chat_id=message.chat.id,
                 message_id=msg_espera.message_id,
                 parse_mode="HTML",
@@ -438,7 +439,7 @@ def procesar_paso_compra(message):
 # ============================================================
 @bot.message_handler(commands=["recargar"])
 def cmd_recargar_admin(message):
-    """Comando para el dueño: /recargar USER_ID MONTO"""
+    """Comando exclusivo para el dueño: /recargar USER_ID MONTO"""
     if message.from_user.id != ADMIN_ID:
         return
 
@@ -455,21 +456,21 @@ def cmd_recargar_admin(message):
 
         bot.reply_to(
             message,
-            f"✅ Se han acreditado <b>${monto:.2f}</b> al usuario <code>{target_id}</code>.\nSaldo total: <b>${nuevo_saldo:.2f}</b>",
+            f"✅ Se han acreditado <b>${monto:.2f}</b> al usuario <code>{target_id}</code>.\nSaldo actual: <b>${nuevo_saldo:.2f} créditos</b>",
             parse_mode="HTML",
         )
 
         try:
             bot.send_message(
                 target_id,
-                f"🎉 <b>¡Tu saldo ha sido recargado!</b>\n\nSe agregaron <b>${monto:.2f} créditos</b> a tu cuenta.\nSaldo total: <b>${nuevo_saldo:.2f}</b>",
+                f"🎉 <b>¡Tu saldo ha sido recargado!</b>\n\nSe agregaron <b>${monto:.2f} créditos</b> a tu cuenta.\nSaldo total disponible: <b>${nuevo_saldo:.2f} créditos</b>",
                 parse_mode="HTML",
             )
         except Exception:
             pass
 
     except ValueError:
-        bot.reply_to(message, "❌ Formato incorrecto. Asegúrate de enviar ID numérico y monto válido.")
+        bot.reply_to(message, "❌ Formato incorrecto. El ID debe ser un número entero y el monto un número.")
 
 
 # ============================================================
