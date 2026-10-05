@@ -14,9 +14,8 @@ ADMIN_ID = 6731555041
 API_URL = "https://justanotherpanel.com/api/v2"
 API_KEY = "3625c0a8ec2d5e89b7172cfcbbc65955"
 
-# --- NOTIFICACIÓN POR WHATSAPP (Opcional vía CallMeBot) ---
 WHATSAPP_PHONE = "+5358960660"
-CALLMEBOT_APIKEY = ""  # Si activas CallMeBot coloca aquí tu clave numérica
+CALLMEBOT_APIKEY = ""
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -38,8 +37,9 @@ def enviar_whatsapp(texto):
     except Exception:
         pass
 
-# --- CATÁLOGO DE SERVICIOS Y COMBOS ---
+# --- CATÁLOGO COMPLETO DE OFERTAS ---
 PAQUETES = {
+    # INSTAGRAM
     "ig_likes": {
         "tipo": "simple",
         "red": "Instagram",
@@ -48,6 +48,15 @@ PAQUETES = {
         "service_id": 5956,
         "cantidad": 1000,
         "tipo_link": "enlace de la publicación o reel"
+    },
+    "ig_vistas": {
+        "tipo": "simple",
+        "red": "Instagram",
+        "nombre": "👁️ 1.000 Vistas de Reel / Video",
+        "precio": 1000,
+        "service_id": 6867,
+        "cantidad": 1000,
+        "tipo_link": "enlace del reel o video"
     },
     "ig_seguidores": {
         "tipo": "simple",
@@ -58,12 +67,30 @@ PAQUETES = {
         "cantidad": 1000,
         "tipo_link": "enlace de tu perfil público"
     },
+    "ig_verificado": {
+        "tipo": "manual",
+        "red": "Instagram",
+        "nombre": "🔹 Verificación / Palomita Azul",
+        "precio": 0,
+        "tipo_link": "enlace de tu perfil"
+    },
+
+    # TIKTOK
     "tt_vistas": {
         "tipo": "simple",
         "red": "TikTok",
-        "nombre": "👁️ 1.000 Vistas de TikTok (Súper Rápidas)",
+        "nombre": "👁️ 1.000 Vistas de TikTok",
         "precio": 1000,
         "service_id": 4412,
+        "cantidad": 1000,
+        "tipo_link": "enlace del video"
+    },
+    "tt_likes": {
+        "tipo": "simple",
+        "red": "TikTok",
+        "nombre": "❤️ 1.000 Likes de TikTok (Garantía 30D)",
+        "precio": 1000,
+        "service_id": 10026,
         "cantidad": 1000,
         "tipo_link": "enlace del video"
     },
@@ -76,6 +103,8 @@ PAQUETES = {
         "cantidad": 1000,
         "tipo_link": "enlace de tu perfil"
     },
+
+    # COMBOS
     "combo_ig_completo": {
         "tipo": "combo",
         "red": "Combos",
@@ -106,7 +135,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot activo y operando."
+    return "Bot en línea activo."
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
@@ -127,12 +156,10 @@ def start_command(message):
     texto = (
         f"👋 ¡Hola, *{message.from_user.first_name}*!\n\n"
         "Bienvenido a **Impulso Redes Pro**.\n"
-        "Potencia tu cuenta con seguidores, likes y reproducciones garantizadas.\n\n"
-        "Selecciona la red social o paquete que deseas:"
+        "Elige la plataforma que deseas potenciar:"
     )
     bot.send_message(message.chat.id, texto, reply_markup=markup, parse_mode="Markdown")
 
-# --- BOTÓN DE SOPORTE DIRECTO ---
 @bot.callback_query_handler(func=lambda call: call.data == "btn_soporte")
 def handle_soporte(call):
     bot.answer_callback_query(call.id)
@@ -140,14 +167,13 @@ def handle_soporte(call):
         "💬 *Atención al Cliente y Soporte*\n\n"
         f"👤 Contacto directo: [@{DATOS_PAGO['telegram_contacto']}](https://t.me/{DATOS_PAGO['telegram_contacto']})\n"
         f"📱 Móvil / WhatsApp: `{DATOS_PAGO['telefono']}`\n\n"
-        "Escríbenos si tienes dudas con tus pedidos, transferencias o servicios personalizados."
+        "Escríbenos si tienes dudas con transferencias, pedidos especiales o verificación."
     )
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("💬 Escribir al Privado", url=f"https://t.me/{DATOS_PAGO['telegram_contacto']}"))
     markup.add(types.InlineKeyboardButton("🔙 Volver al Inicio", callback_data="back_start"))
     bot.send_message(call.message.chat.id, texto, reply_markup=markup, parse_mode="Markdown")
 
-# --- LISTA DE OFERTAS POR CATEGORÍA ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith("cat_"))
 def handle_category(call):
     bot.answer_callback_query(call.id)
@@ -156,7 +182,11 @@ def handle_category(call):
     markup = types.InlineKeyboardMarkup(row_width=1)
     for pkg_id, pkg in PAQUETES.items():
         if pkg["red"] == cat:
-            markup.add(types.InlineKeyboardButton(f"{pkg['nombre']} - {pkg['precio']:,} CUP", callback_data=f"buy_{pkg_id}"))
+            if pkg["tipo"] == "manual":
+                btn_txt = f"{pkg['nombre']} (Consultar)"
+            else:
+                btn_txt = f"{pkg['nombre']} - {pkg['precio']:,} CUP"
+            markup.add(types.InlineKeyboardButton(btn_txt, callback_data=f"buy_{pkg_id}"))
     
     markup.add(types.InlineKeyboardButton("🔙 Volver al Inicio", callback_data="back_start"))
     bot.edit_message_text(f"🔥 *Ofertas disponibles en {cat}:*", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
@@ -171,13 +201,25 @@ def back_to_start(call):
     markup.add(types.InlineKeyboardButton("💬 Soporte / Contacto", callback_data="btn_soporte"))
     bot.edit_message_text("Selecciona una opción:", call.message.chat.id, call.message.message_id, reply_markup=markup)
 
-# --- SELECCIÓN DEL SERVICIO ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
 def handle_buy(call):
     bot.answer_callback_query(call.id)
     pkg_id = call.data.split("_", 1)[1]
     pkg = PAQUETES[pkg_id]
     user_id = str(call.from_user.id)
+
+    if pkg["tipo"] == "manual":
+        texto = (
+            "🔹 *Servicio de Verificación (Palomita Azul)*\n\n"
+            "Este trámite requiere evaluación manual de perfil y requisitos específicos.\n\n"
+            f"Por favor contacta directamente al administrador para cotizar tu caso:\n"
+            f"👉 [@{DATOS_PAGO['telegram_contacto']}](https://t.me/{DATOS_PAGO['telegram_contacto']})"
+        )
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("💬 Hablar con Soporte", url=f"https://t.me/{DATOS_PAGO['telegram_contacto']}"))
+        markup.add(types.InlineKeyboardButton("🔙 Volver", callback_data="cat_Instagram"))
+        bot.send_message(call.message.chat.id, texto, reply_markup=markup, parse_mode="Markdown")
+        return
 
     if pkg["tipo"] == "simple":
         user_sessions[user_id] = {
@@ -201,7 +243,6 @@ def handle_buy(call):
 
     bot.send_message(call.message.chat.id, texto, parse_mode="Markdown")
 
-# --- RECEPCIÓN DE ENLACES ---
 @bot.message_handler(func=lambda msg: str(msg.from_user.id) in user_sessions and user_sessions[str(msg.from_user.id)].get("step") in ["AWAIT_LINK", "AWAIT_COMBO_LINK"])
 def handle_link_input(message):
     user_id = str(message.from_user.id)
@@ -241,7 +282,6 @@ def handle_link_input(message):
     )
     bot.send_message(message.chat.id, texto, parse_mode="Markdown")
 
-# --- RECEPCIÓN DEL COMPROBANTE DE PAGO ---
 @bot.message_handler(content_types=['photo'], func=lambda msg: str(msg.from_user.id) in user_sessions and user_sessions[str(msg.from_user.id)].get("step") == "AWAIT_PAYMENT_PROOF")
 def handle_payment_proof(message):
     user_id = str(message.from_user.id)
@@ -261,7 +301,6 @@ def handle_payment_proof(message):
         parse_mode="Markdown"
     )
 
-    # Notificación a tu cuenta privada de Telegram
     file_id = message.photo[-1].file_id
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
@@ -278,7 +317,6 @@ def handle_payment_proof(message):
     )
     bot.send_photo(ADMIN_ID, file_id, caption=caption, reply_markup=markup, parse_mode="Markdown")
 
-    # Alerta a WhatsApp
     msg_wa = (
         f"🔔 NUEVO PAGO RECIBIDO\n\n"
         f"• Cliente: {message.from_user.first_name}\n"
@@ -287,10 +325,8 @@ def handle_payment_proof(message):
         f"Abre Telegram para aprobar la orden."
     )
     enviar_whatsapp(msg_wa)
-
     del user_sessions[user_id]
 
-# --- APROBACIÓN O RECHAZO POR EL ADMINISTRADOR ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith("app_") or call.data.startswith("rej_"))
 def handle_admin_decision(call):
     if call.from_user.id != ADMIN_ID:
