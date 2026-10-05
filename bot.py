@@ -37,7 +37,7 @@ CACHE_ENLACES = {}
 # Evita problemas de concurrencia con SQLite
 DB_LOCK = threading.RLock()
 
-# Ruta al binario ejecutable de ffmpeg provisto por imageio_ffmpeg
+# Binario ejecutable de ffmpeg provisto por imageio_ffmpeg
 FFMPEG_PATH = imageio_ffmpeg.get_ffmpeg_exe()
 
 # ============================================================
@@ -241,7 +241,7 @@ def esta_suscrito(user_id):
 
 
 # ============================================================
-# DESCARGA HTTP
+# DESCARGA HTTP DIRECTA
 # ============================================================
 def bajar_archivo(url, destino):
     if not url:
@@ -250,7 +250,8 @@ def bajar_archivo(url, destino):
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 Chrome/140 Safari/537.36"
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/140.0.0.0 Safari/537.36"
         )
     }
 
@@ -271,7 +272,7 @@ def bajar_archivo(url, destino):
         return os.path.exists(destino) and os.path.getsize(destino) > 50 * 1024
 
     except Exception as e:
-        print(f"Error descargando archivo: {e}")
+        print(f"Error descargando archivo HTTP: {e}")
         try:
             if os.path.exists(destino):
                 os.remove(destino)
@@ -281,7 +282,7 @@ def bajar_archivo(url, destino):
 
 
 # ============================================================
-# TIKTOK
+# TIKTOK (INTACTO)
 # ============================================================
 def obtener_datos_tiktok(url):
     try:
@@ -314,7 +315,7 @@ def obtener_datos_tiktok(url):
 
 
 # ============================================================
-# INSTAGRAM
+# INSTAGRAM (CON API + FALLBACK)
 # ============================================================
 def extraer_shortcode_instagram(url):
     match = re.search(
@@ -376,12 +377,41 @@ def descargar_instagram(url):
     item_id = os.urandom(6).hex()
     salida = os.path.abspath(os.path.join("descargas", f"ig_{item_id}.mp4"))
 
+    # 1. API directa para evadir bloqueos de Meta
+    try:
+        api_url = "https://vkrdownloader.org/server/"
+        params = {"api_key": "vkrdownloader", "vkr": clean_url}
+        resp = requests.get(api_url, params=params, timeout=20)
+        if resp.status_code == 200:
+            datos = resp.json()
+            formatos = datos.get("formats") or []
+            video_url = None
+            for fmt in formatos:
+                if fmt.get("url") and fmt.get("ext") == "mp4":
+                    video_url = fmt["url"]
+                    break
+            if not video_url and datos.get("source"):
+                video_url = datos.get("source")
+
+            if video_url and bajar_archivo(video_url, salida):
+                return salida, None
+    except Exception as e:
+        print(f"Fallo método API directa de Instagram: {e}")
+
+    # 2. yt-dlp con User-Agent móvil
     opciones = {
         "quiet": True,
         "no_warnings": True,
         "outtmpl": salida,
         "format": "best[ext=mp4]/best",
         "ffmpeg_location": FFMPEG_PATH,
+        "http_headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+                "AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 "
+                "Instagram 300.0.0.0"
+            )
+        },
     }
 
     try:
@@ -393,12 +423,13 @@ def descargar_instagram(url):
     except Exception as e:
         print(f"Error yt-dlp con Instagram: {e}")
 
+    # 3. Instaloader
     archivo_loader, carpeta_temp = descargar_instagram_instaloader(clean_url)
     return archivo_loader, carpeta_temp
 
 
 # ============================================================
-# YOUTUBE
+# YOUTUBE (CON BYPASS ROBUSTO PARA SHORTS Y CLOUD)
 # ============================================================
 def es_url_youtube(url):
     url_lower = url.lower()
@@ -410,45 +441,76 @@ def es_url_youtube(url):
 
 
 def obtener_info_youtube(url):
-    try:
-        clean_url = url.split("?")[0].strip()
-        opciones = {
-            "quiet": True,
-            "no_warnings": True,
-            "noplaylist": True,
-            "skip_download": True,
-        }
+    clean_url = url.split("?")[0].strip()
 
+    # Si es un short, convertir a formato regular de watch
+    match_short = re.search(r"shorts/([a-zA-Z0-9_-]+)", clean_url)
+    if match_short:
+        video_id = match_short.group(1)
+        clean_url = f"https://www.youtube.com/watch?v={video_id}"
+    else:
+        video_id = None
+
+    # Intentar extracción rápida
+    opciones = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "extract_flat": "in_playlist",
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android_vr", "web_creator", "mweb"]
+            }
+        }
+    }
+
+    try:
         with yt_dlp.YoutubeDL(opciones) as ydl:
             info = ydl.extract_info(clean_url, download=False)
 
-        if not info:
-            return None
-
-        return {
-            "id": info.get("id"),
-            "title": info.get("title") or "Video de YouTube",
-            "url": clean_url,
-            "duration": info.get("duration") or 0,
-            "webpage_url": info.get("webpage_url") or clean_url,
-        }
+        if info:
+            return {
+                "id": info.get("id") or video_id,
+                "title": info.get("title") or "Video de YouTube",
+                "url": clean_url,
+                "duration": info.get("duration") or 0,
+            }
     except Exception as e:
-        print(f"Error obteniendo info de YouTube: {e}")
-        return None
+        print(f"Aviso en análisis de YouTube: {e}")
+
+    # Fallback inmediato si YouTube intenta bloquear la cabecera
+    if video_id:
+        return {
+            "id": video_id,
+            "title": "YouTube Short",
+            "url": clean_url,
+            "duration": 0,
+        }
+
+    return None
 
 
 def descargar_youtube(url, tipo, item_id):
     os.makedirs("descargas", exist_ok=True)
+
+    opciones_base = {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "ffmpeg_location": FFMPEG_PATH,
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android_vr", "web_creator", "mweb"]
+            }
+        },
+    }
 
     if tipo == "video":
         salida = os.path.abspath(
             os.path.join("descargas", f"youtube_{item_id}.mp4")
         )
         opciones = {
-            "quiet": True,
-            "no_warnings": True,
-            "noplaylist": True,
-            "ffmpeg_location": FFMPEG_PATH,
+            **opciones_base,
             "outtmpl": salida,
             "format": "best[ext=mp4]/best",
         }
@@ -458,10 +520,7 @@ def descargar_youtube(url, tipo, item_id):
             os.path.join("descargas", f"youtube_{item_id}.mp3")
         )
         opciones = {
-            "quiet": True,
-            "no_warnings": True,
-            "noplaylist": True,
-            "ffmpeg_location": FFMPEG_PATH,
+            **opciones_base,
             "outtmpl": salida,
             "format": "bestaudio/best",
             "postprocessors": [
@@ -676,7 +735,7 @@ def recibir_enlace(message):
         )
         return
 
-    # TikTok
+    # TikTok (INTACTO)
     if "tiktok.com" in raw_text.lower():
         msg_espera = bot.reply_to(
             message,
@@ -817,7 +876,7 @@ def recibir_enlace(message):
 
 
 # ============================================================
-# BOTONES CALLBACK
+# BOTONES CALLBACK (INTACTOS)
 # ============================================================
 @bot.callback_query_handler(
     func=lambda call: call.data.startswith(("vid_", "aud_", "ytv_", "yta_"))
@@ -947,7 +1006,7 @@ def procesar_seleccion(call):
             CACHE_ENLACES.pop(item_id_yt, None)
         return
 
-    # TikTok
+    # TikTok (INTACTO)
     try:
         tipo, item_id = call.data.split("_", 1)
     except ValueError:
