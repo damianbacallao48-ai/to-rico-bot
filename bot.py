@@ -1,493 +1,253 @@
 import os
-import sqlite3
-import threading
+import json
 import requests
+import telebot
+from telebot import types
 from flask import Flask
-from telebot import TeleBot, types
+from threading import Thread
 
-# ============================================================
-# CONFIGURACIÓN GENERAL
-# ============================================================
+# --- CONFIGURACIÓN PRINCIPAL ---
 BOT_TOKEN = "8998730541:AAF8XH6WpLrP6SelBOtj_qHraw5sl3SMSgE"
 ADMIN_ID = 6731555041
-CANAL_ENLACE = "https://t.me/torico_cuba_db"
-ADMIN_USER = "@torico_cuba_db"
 
-# ============================================================
-# CREDENCIALES DEL PROVEEDOR SMM MAYORISTA
-# ============================================================
-SMM_API_URL = "https://tuprioridadsmm.com/api/v2"
-SMM_API_KEY = "TU_API_KEY_DEL_PROVEEDOR"
+# Panel SMM (JAP / JustAnotherPanel u otro compatible con API v2)
+API_URL = os.environ.get("API_URL", "https://justanotherpanel.com/api/v2")
+API_KEY = os.environ.get("API_KEY", "")
 
-# Catálogo de servicios configurados
+bot = telebot.TeleBot(BOT_TOKEN)
+
+# --- BASE DE DATOS LOCAL (JSON) ---
+DB_FILE = "database.json"
+
+def load_db():
+    if not os.path.exists(DB_FILE):
+        return {"users": {}}
+    try:
+        with open(DB_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {"users": {}}
+
+def save_db(data):
+    with open(DB_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4, ensure_ascii=False)
+
+def get_user_balance(user_id):
+    db = load_db()
+    return db["users"].get(str(user_id), {}).get("balance", 0.0)
+
+def update_user_balance(user_id, amount):
+    db = load_db()
+    uid = str(user_id)
+    if uid not in db["users"]:
+        db["users"][uid] = {"balance": 0.0}
+    db["users"][uid]["balance"] += amount
+    save_db(db)
+    return db["users"][uid]["balance"]
+
+# Catálogo local de servicios disponibles
 SERVICIOS = {
-    "tt_views": {
-        "nombre": "🎵 TikTok - Vistas Rápidas",
-        "service_id": 101,
-        "precio_por_1k": 50.0,
-        "min": 100,
-        "max": 50000,
-    },
-    "tt_likes": {
-        "nombre": "❤️ TikTok - Likes Reales",
-        "service_id": 102,
-        "precio_por_1k": 150.0,
-        "min": 50,
-        "max": 10000,
-    },
-    "ig_views": {
-        "nombre": "📸 Instagram - Vistas Reels",
-        "service_id": 201,
-        "precio_por_1k": 60.0,
-        "min": 100,
-        "max": 50000,
-    },
-    "ig_likes": {
-        "nombre": "❤️ Instagram - Likes",
-        "service_id": 202,
-        "precio_por_1k": 180.0,
-        "min": 50,
-        "max": 10000,
-    },
-    "yt_views": {
-        "nombre": "▶️ YouTube - Vistas / Shorts",
-        "service_id": 301,
-        "precio_por_1k": 200.0,
-        "min": 500,
-        "max": 20000,
-    },
+    "1": {"nombre": "Seguidores de Instagram [Garantía]", "precio_mil": 1.50, "service_id": 101},
+    "2": {"nombre": "Likes de Instagram [Rápidos]", "precio_mil": 0.50, "service_id": 102},
+    "3": {"nombre": "Vistas de TikTok [Alta Retención]", "precio_mil": 0.30, "service_id": 103},
+    "4": {"nombre": "Seguidores de TikTok", "precio_mil": 2.00, "service_id": 104}
 }
 
-DB_FILE = "smm_panel.db"
-DB_LOCK = threading.RLock()
+user_sessions = {}
 
-bot = TeleBot(BOT_TOKEN)
+# --- SERVIDOR WEB PARA MANTENER ACTIVO EL CONTENEDOR ---
 app = Flask(__name__)
 
-SESION_COMPRA = {}
-
-
-# ============================================================
-# SERVIDOR WEB PARA MANTENER ACTIVO RAILWAY
-# ============================================================
-@app.route("/")
+@app.route('/')
 def home():
-    return "Bot SMM Activo y en Línea"
+    return "Bot en funcionamiento activo."
 
+def run_web():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
 
-def iniciar_servidor_web():
-    port = int(os.environ.get("PORT", "8080"))
-    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+# --- MANEJADORES DE COMANDOS ---
 
-
-# ============================================================
-# BASE DE DATOS
-# ============================================================
-def obtener_conexion():
-    conn = sqlite3.connect(DB_FILE, timeout=30)
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
-
-
-def inicializar_bd():
-    with DB_LOCK:
-        conn = obtener_conexion()
-        try:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS clientes (
-                    user_id INTEGER PRIMARY KEY,
-                    saldo REAL DEFAULT 0.0,
-                    total_gastado REAL DEFAULT 0.0
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS pedidos (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER,
-                    servicio TEXT,
-                    enlace TEXT,
-                    cantidad INTEGER,
-                    costo REAL,
-                    orden_id_proveedor TEXT,
-                    fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-            conn.commit()
-        finally:
-            conn.close()
-
-
-def obtener_cliente(user_id):
-    with DB_LOCK:
-        conn = obtener_conexion()
-        try:
-            cur = conn.cursor()
-            cur.execute("SELECT saldo, total_gastado FROM clientes WHERE user_id = ?", (user_id,))
-            res = cur.fetchone()
-            if not res:
-                cur.execute("INSERT INTO clientes (user_id, saldo, total_gastado) VALUES (?, 0.0, 0.0)", (user_id,))
-                conn.commit()
-                return 0.0, 0.0
-            return res[0], res[1]
-        finally:
-            conn.close()
-
-
-def ajustar_saldo(user_id, monto):
-    with DB_LOCK:
-        conn = obtener_conexion()
-        try:
-            cur = conn.cursor()
-            cur.execute(
-                """
-                INSERT INTO clientes (user_id, saldo, total_gastado)
-                VALUES (?, ?, 0.0)
-                ON CONFLICT(user_id)
-                DO UPDATE SET saldo = saldo + ?
-                """,
-                (user_id, monto, monto),
-            )
-            conn.commit()
-        finally:
-            conn.close()
-
-
-def registrar_pedido(user_id, servicio_clave, enlace, cantidad, costo, id_externo):
-    with DB_LOCK:
-        conn = obtener_conexion()
-        try:
-            cur = conn.cursor()
-            cur.execute(
-                "UPDATE clientes SET saldo = saldo - ?, total_gastado = total_gastado + ? WHERE user_id = ?",
-                (costo, costo, user_id),
-            )
-            cur.execute(
-                """
-                INSERT INTO pedidos (user_id, servicio, enlace, cantidad, costo, orden_id_proveedor)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (user_id, servicio_clave, enlace, cantidad, costo, str(id_externo)),
-            )
-            conn.commit()
-        finally:
-            conn.close()
-
-
-# ============================================================
-# CONEXIÓN CON API MAYORISTA SMM
-# ============================================================
-def enviar_orden_mayorista(service_id, enlace, cantidad):
-    if SMM_API_KEY == "TU_API_KEY_DEL_PROVEEDOR":
-        orden_ficticia = f"DEMO-{os.urandom(4).hex().upper()}"
-        return True, orden_ficticia
-
-    try:
-        payload = {
-            "key": SMM_API_KEY,
-            "action": "add",
-            "service": service_id,
-            "link": enlace,
-            "quantity": cantidad,
-        }
-        res = requests.post(SMM_API_URL, data=payload, timeout=20)
-        datos = res.json()
-        if "order" in datos:
-            return True, datos["order"]
-        return False, datos.get("error", "Error del panel mayorista")
-    except Exception as e:
-        print(f"Fallo contactando API mayorista: {e}")
-        return False, str(e)
-
-
-# ============================================================
-# COMANDOS PRINCIPALES
-# ============================================================
-@bot.message_handler(commands=["start"])
-def cmd_start(message):
-    user_id = message.from_user.id
-    saldo, _ = obtener_cliente(user_id)
-
+@bot.message_handler(commands=['start'])
+def start_command(message):
+    first_name = message.from_user.first_name or "Usuario"
+    
     markup = types.InlineKeyboardMarkup(row_width=2)
-    btn_pedir = types.InlineKeyboardButton("🛒 Realizar Pedido", callback_data="menu_servicios")
-    btn_saldo = types.InlineKeyboardButton("💳 Recargar Saldo", callback_data="menu_recarga")
-    btn_perfil = types.InlineKeyboardButton("👤 Mi Cuenta", callback_data="menu_cuenta")
-    markup.add(btn_pedir)
-    markup.add(btn_saldo, btn_perfil)
+    btn_order = types.InlineKeyboardButton("🛒 Realizar Pedido", callback_data="btn_order")
+    btn_balance = types.InlineKeyboardButton("💰 Mi Saldo", callback_data="btn_balance")
+    btn_services = types.InlineKeyboardButton("📋 Lista de Servicios", callback_data="btn_services")
+    btn_support = types.InlineKeyboardButton("🆘 Soporte", callback_data="btn_support")
+    markup.add(btn_order, btn_balance, btn_services, btn_support)
 
     texto = (
-        "🚀 <b>¡Bienvenido al Panel de Crecimiento en Redes!</b>\n\n"
-        "Impulsa tus videos, publicaciones y canales al instante con vistas, likes y reproducciones.\n\n"
-        f"💰 <b>Tu Saldo disponible:</b> <code>${saldo:.2f} créditos</code>\n"
-        f"🆔 <b>Tu ID:</b> <code>{user_id}</code>\n\n"
-        "Elige una opción en el menú inferior:"
+        f"👋 ¡Hola, *{first_name}*! Bienvenido a *Impulso Redes Pro*.\n\n"
+        "Potencia tus redes sociales de forma rápida, segura y automatizada.\n\n"
+        "Selecciona una opción del menú para comenzar:"
     )
-    bot.reply_to(message, texto, reply_markup=markup, parse_mode="HTML")
+    bot.send_message(message.chat.id, texto, reply_markup=markup, parse_mode="Markdown")
 
-
-@bot.callback_query_handler(func=lambda call: call.data == "menu_servicios")
-def mostrar_servicios(call):
-    markup = types.InlineKeyboardMarkup()
-    for clave, s in SERVICIOS.items():
-        btn = types.InlineKeyboardButton(
-            f"{s['nombre']} (${s['precio_por_1k']:.0f}/1k)",
-            callback_data=f"sel_{clave}",
-        )
-        markup.add(btn)
-
-    markup.add(types.InlineKeyboardButton("🔙 Volver", callback_data="menu_inicio"))
-    bot.edit_message_text(
-        "📋 <b>Selecciona el servicio que deseas solicitar:</b>",
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        reply_markup=markup,
-        parse_mode="HTML",
-    )
-
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("sel_"))
-def iniciar_flujo_pedido(call):
-    user_id = call.from_user.id
-    clave = call.data.replace("sel_", "")
-    servicio = SERVICIOS.get(clave)
-
-    if not servicio:
-        bot.answer_callback_query(call.id, "Servicio no disponible.")
-        return
-
-    SESION_COMPRA[user_id] = {"servicio": clave, "paso": "esperando_enlace"}
-
-    texto = (
-        f"📌 <b>Has seleccionado:</b> {servicio['nombre']}\n\n"
-        f"💵 <b>Precio:</b> ${servicio['precio_por_1k']:.2f} por cada 1,000 unidades.\n"
-        f"📊 <b>Mínimo:</b> {servicio['min']} | <b>Máximo:</b> {servicio['max']}\n\n"
-        "👉 <b>Envía ahora el enlace (URL) de tu video o perfil:</b>"
-    )
-    bot.edit_message_text(
-        texto,
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        parse_mode="HTML",
-    )
-
-
-@bot.callback_query_handler(func=lambda call: call.data == "menu_cuenta")
-def ver_cuenta(call):
-    user_id = call.from_user.id
-    saldo, gastado = obtener_cliente(user_id)
-    texto = (
-        "👤 <b>Estado de tu Cuenta</b>\n\n"
-        f"🆔 <b>ID de Usuario:</b> <code>{user_id}</code>\n"
-        f"💰 <b>Saldo disponible:</b> <code>${saldo:.2f} créditos</code>\n"
-        f"📊 <b>Total invertido:</b> <code>${gastado:.2f} créditos</code>\n"
-    )
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("🔙 Volver", callback_data="menu_inicio"))
-    bot.edit_message_text(
-        texto,
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        reply_markup=markup,
-        parse_mode="HTML",
-    )
-
-
-@bot.callback_query_handler(func=lambda call: call.data == "menu_recarga")
-def ver_recarga(call):
-    user_id = call.from_user.id
-    texto = (
-        "💳 <b>Recarga de Saldo</b>\n\n"
-        "Para agregar fondos a tu cuenta, contacta al administrador:\n"
-        f"👤 <b>Administrador:</b> {ADMIN_USER}\n"
-        f"🆔 <b>Tu ID para acreditar:</b> <code>{user_id}</code>\n\n"
-        "Aceptamos transferencias y pagos directos. Al confirmar el pago, tu saldo se reflejará al instante."
-    )
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("💬 Contactar Soporte", url=f"https://t.me/{ADMIN_USER.replace('@', '')}"))
-    markup.add(types.InlineKeyboardButton("🔙 Volver", callback_data="menu_inicio"))
-    bot.edit_message_text(
-        texto,
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        reply_markup=markup,
-        parse_mode="HTML",
-    )
-
-
-@bot.callback_query_handler(func=lambda call: call.data == "menu_inicio")
-def volver_inicio(call):
-    user_id = call.from_user.id
-    saldo, _ = obtener_cliente(user_id)
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    btn_pedir = types.InlineKeyboardButton("🛒 Realizar Pedido", callback_data="menu_servicios")
-    btn_saldo = types.InlineKeyboardButton("💳 Recargar Saldo", callback_data="menu_recarga")
-    btn_perfil = types.InlineKeyboardButton("👤 Mi Cuenta", callback_data="menu_cuenta")
-    markup.add(btn_pedir)
-    markup.add(btn_saldo, btn_perfil)
-
-    texto = (
-        "🚀 <b>Panel Principal</b>\n\n"
-        f"💰 <b>Saldo disponible:</b> <code>${saldo:.2f} créditos</code>\n"
-        f"🆔 <b>Tu ID:</b> <code>{user_id}</code>\n\n"
-        "Elige una opción:"
-    )
-    bot.edit_message_text(
-        texto,
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        reply_markup=markup,
-        parse_mode="HTML",
-    )
-
-
-# ============================================================
-# PROCESAMIENTO DE TEXTO (ENLACE Y CANTIDAD)
-# ============================================================
-@bot.message_handler(func=lambda m: m.from_user.id in SESION_COMPRA and not m.text.startswith("/"))
-def procesar_paso_compra(message):
-    user_id = message.from_user.id
-    estado = SESION_COMPRA.get(user_id)
-    texto = message.text.strip()
-
-    if estado["paso"] == "esperando_enlace":
-        if not ("http://" in texto or "https://" in texto):
-            bot.reply_to(message, "⚠️ Envía un enlace válido que empiece por https:// o usa /cancelar para salir.")
-            return
-
-        estado["enlace"] = texto
-        estado["paso"] = "esperando_cantidad"
-        s = SERVICIOS[estado["servicio"]]
-
-        bot.reply_to(
-            message,
-            (
-                "✅ <b>Enlace recibido.</b>\n\n"
-                f"¿Cuánta cantidad deseas enviar?\n"
-                f"• Mínimo: <b>{s['min']}</b>\n"
-                f"• Máximo: <b>{s['max']}</b>\n\n"
-                "👉 <b>Escribe solo el número:</b>"
-            ),
-            parse_mode="HTML",
-        )
-
-    elif estado["paso"] == "esperando_cantidad":
-        if not texto.isdigit():
-            bot.reply_to(message, "❌ Por favor escribe un número entero válido.")
-            return
-
-        cantidad = int(texto)
-        s = SERVICIOS[estado["servicio"]]
-
-        if cantidad < s["min"] or cantidad > s["max"]:
-            bot.reply_to(message, f"❌ La cantidad debe estar entre {s['min']} y {s['max']}.")
-            return
-
-        costo = (cantidad / 1000.0) * s["precio_por_1k"]
-        saldo_actual, _ = obtener_cliente(user_id)
-
-        if saldo_actual < costo:
-            bot.reply_to(
-                message,
-                (
-                    f"❌ <b>Saldo insuficiente.</b>\n\n"
-                    f"Costo del pedido: <b>${costo:.2f} créditos</b>\n"
-                    f"Tu saldo: <b>${saldo_actual:.2f} créditos</b>\n\n"
-                    "Recarga saldo en el menú principal para procesar esta orden."
-                ),
-                parse_mode="HTML",
-            )
-            SESION_COMPRA.pop(user_id, None)
-            return
-
-        msg_espera = bot.reply_to(message, "⏳ <b>Procesando orden...</b>", parse_mode="HTML")
-        exito, resultado = enviar_orden_mayorista(s["service_id"], estado["enlace"], cantidad)
-
-        if exito:
-            registrar_pedido(user_id, estado["servicio"], estado["enlace"], cantidad, costo, resultado)
-            bot.edit_message_text(
-                (
-                    "🎉 <b>¡Orden enviada con éxito!</b>\n\n"
-                    f"📌 <b>Servicio:</b> {s['nombre']}\n"
-                    f"🔢 <b>Cantidad:</b> {cantidad}\n"
-                    f"💰 <b>Total descontado:</b> ${costo:.2f} créditos\n"
-                    f"🔖 <b>ID de Orden:</b> <code>{resultado}</code>\n\n"
-                    "El servicio comenzará a reflejarse en los próximos minutos."
-                ),
-                chat_id=message.chat.id,
-                message_id=msg_espera.message_id,
-                parse_mode="HTML",
-            )
-        else:
-            bot.edit_message_text(
-                f"❌ Error al procesar con el proveedor: <code>{resultado}</code>\nNo se ha descontado saldo.",
-                chat_id=message.chat.id,
-                message_id=msg_espera.message_id,
-                parse_mode="HTML",
-            )
-
-        SESION_COMPRA.pop(user_id, None)
-
-
-@bot.message_handler(commands=["cancelar"])
-def cmd_cancelar(message):
-    user_id = message.from_user.id
-    if user_id in SESION_COMPRA:
-        SESION_COMPRA.pop(user_id, None)
-        bot.reply_to(message, "🚫 Operación cancelada. Escribe /start para volver al inicio.")
-    else:
-        bot.reply_to(message, "No tienes ninguna compra en proceso.")
-
-
-# ============================================================
-# PANEL DE CONTROL DE ADMINISTRADOR
-# ============================================================
-@bot.message_handler(commands=["recargar"])
-def cmd_recargar_admin(message):
+@bot.message_handler(commands=['recargar'])
+def cmd_recargar(message):
     if message.from_user.id != ADMIN_ID:
+        bot.reply_to(message, "❌ No tienes permisos para usar este comando.")
         return
 
     partes = message.text.split()
-    if len(partes) < 3:
-        bot.reply_to(message, "Uso: <code>/recargar ID_USUARIO MONTO</code>", parse_mode="HTML")
+    if len(partes) != 3:
+        bot.reply_to(message, "⚠️ Uso incorrecto.\nFormato: `/recargar <ID_USUARIO> <CANTIDAD>`", parse_mode="Markdown")
         return
 
     try:
-        target_id = int(partes[1])
+        target_id = partes[1]
         monto = float(partes[2])
-        ajustar_saldo(target_id, monto)
-        nuevo_saldo, _ = obtener_cliente(target_id)
+        nuevo_saldo = update_user_balance(target_id, monto)
 
         bot.reply_to(
             message,
-            f"✅ Se han acreditado <b>${monto:.2f}</b> al usuario <code>{target_id}</code>.\nSaldo actual: <b>${nuevo_saldo:.2f} créditos</b>",
-            parse_mode="HTML",
+            f"✅ Se han acreditado ${monto:.2f} al usuario `{target_id}`.\n"
+            f"Saldo actual: *${nuevo_saldo:.2f} créditos*",
+            parse_mode="Markdown"
         )
 
         try:
             bot.send_message(
                 target_id,
-                f"🎉 <b>¡Tu saldo ha sido recargado!</b>\n\nSe agregaron <b>${monto:.2f} créditos</b> a tu cuenta.\nSaldo total disponible: <b>${nuevo_saldo:.2f} créditos</b>",
-                parse_mode="HTML",
+                f"🎉 ¡Tu saldo ha sido recargado!\n\n"
+                f"Se agregaron *${monto:.2f} créditos* a tu cuenta.\n"
+                f"Saldo total disponible: *${nuevo_saldo:.2f} créditos*",
+                parse_mode="Markdown"
             )
         except Exception:
             pass
 
     except ValueError:
-        bot.reply_to(message, "❌ Formato incorrecto. El ID debe ser un número entero y el monto un número.")
+        bot.reply_to(message, "❌ El monto debe ser un valor numérico válido.")
 
+# --- CALLBACKS DEL MENÚ ---
 
-# ============================================================
-# INICIO
-# ============================================================
+@bot.callback_query_handler(func=lambda call: True)
+def callback_handler(call):
+    user_id = str(call.from_user.id)
+    chat_id = call.message.chat.id
+
+    if call.data == "btn_balance":
+        saldo = get_user_balance(user_id)
+        bot.answer_callback_query(call.id)
+        bot.send_message(
+            chat_id,
+            f"💰 *Tu saldo actual es:* `${saldo:.2f} créditos`\n\n"
+            "Para recargar fondos, contacta al administrador.",
+            parse_mode="Markdown"
+        )
+
+    elif call.data == "btn_services":
+        bot.answer_callback_query(call.id)
+        texto = "📋 *Servicios Disponibles:*\n\n"
+        for k, v in SERVICIOS.items():
+            texto += f"• *{v['nombre']}*\n  Precio por 1k: `${v['precio_mil']:.2f}`\n\n"
+        bot.send_message(chat_id, texto, parse_mode="Markdown")
+
+    elif call.data == "btn_support":
+        bot.answer_callback_query(call.id)
+        bot.send_message(
+            chat_id,
+            f"🆘 Para dudas o soporte para recargas, contacta a: [Administrador](tg://user?id={ADMIN_ID})",
+            parse_mode="Markdown"
+        )
+
+    elif call.data == "btn_order":
+        bot.answer_callback_query(call.id)
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        for k, v in SERVICIOS.items():
+            markup.add(types.InlineKeyboardButton(f"{v['nombre']} - ${v['precio_mil']}/k", callback_data=f"sel_{k}"))
+        bot.send_message(chat_id, "Selecciona el servicio que deseas ordenar:", reply_markup=markup)
+
+    elif call.data.startswith("sel_"):
+        bot.answer_callback_query(call.id)
+        servicio_key = call.data.split("_")[1]
+        user_sessions[user_id] = {"servicio": SERVICIOS[servicio_key], "step": "LINK"}
+        bot.send_message(
+            chat_id,
+            f"Seleccionaste: *{SERVICIOS[servicio_key]['nombre']}*\n\n"
+            "Envía el *enlace* del perfil, publicación o video a promocionar:",
+            parse_mode="Markdown"
+        )
+
+# --- FLUJO DE PEDIDO PASO A PASO ---
+
+@bot.message_handler(func=lambda msg: str(msg.from_user.id) in user_sessions)
+def handle_order_flow(message):
+    user_id = str(message.from_user.id)
+    session = user_sessions[user_id]
+
+    if session.get("step") == "LINK":
+        session["link"] = message.text.strip()
+        session["step"] = "CANTIDAD"
+        bot.send_message(
+            message.chat.id,
+            "Ahora indica la **cantidad** que deseas ordenar (ejemplo: 500, 1000):",
+            parse_mode="Markdown"
+        )
+
+    elif session.get("step") == "CANTIDAD":
+        try:
+            cantidad = int(message.text.strip())
+            if cantidad <= 0:
+                raise ValueError
+        except ValueError:
+            bot.reply_to(message, "❌ Por favor introduce un número entero positivo.")
+            return
+
+        servicio = session["servicio"]
+        costo = (cantidad / 1000.0) * servicio["precio_mil"]
+        saldo_disponible = get_user_balance(user_id)
+
+        if saldo_disponible < costo:
+            bot.send_message(
+                message.chat.id,
+                f"❌ Saldo insuficiente.\n\n"
+                f"Costo del pedido: *${costo:.2f} créditos*\n"
+                f"Tu saldo actual: *${saldo_disponible:.2f} créditos*\n\n"
+                "Usa /start para volver al menú o recarga saldo.",
+                parse_mode="Markdown"
+            )
+            del user_sessions[user_id]
+            return
+
+        # Descontar saldo
+        nuevo_saldo = update_user_balance(user_id, -costo)
+
+        # Enviar orden al panel API (si hay API_KEY configurada)
+        order_id = "LOCAL-" + str(message.message_id)
+        if API_KEY:
+            try:
+                payload = {
+                    "key": API_KEY,
+                    "action": "add",
+                    "service": servicio["service_id"],
+                    "link": session["link"],
+                    "quantity": cantidad
+                }
+                res = requests.post(API_URL, data=payload, timeout=15).json()
+                if "order" in res:
+                    order_id = str(res["order"])
+            except Exception as e:
+                print(f"Error conectando con la API SMM: {e}")
+
+        bot.send_message(
+            message.chat.id,
+            f"✅ *¡Pedido creado con éxito!*\n\n"
+            f"🆔 *ID del Pedido:* `{order_id}`\n"
+            f"📌 *Servicio:* {servicio['nombre']}\n"
+            f"🔗 *Enlace:* {session['link']}\n"
+            f"🔢 *Cantidad:* {cantidad}\n"
+            f"💵 *Costo:* ${costo:.2f} créditos\n"
+            f"💰 *Saldo restante:* ${nuevo_saldo:.2f} créditos",
+            parse_mode="Markdown"
+        )
+        del user_sessions[user_id]
+
+# --- INICIO DE EJECUCIÓN ---
 if __name__ == "__main__":
-    print("Iniciando base de datos SMM...")
-    inicializar_bd()
-
-    print("Iniciando servidor web...")
-    threading.Thread(target=iniciar_servidor_web, daemon=True).start()
-
-    print("Bot SMM listo y en escucha...")
-    bot.infinity_polling(timeout=30, skip_pending=True)
+    Thread(target=run_web, daemon=True).start()
+    bot.infinity_polling(skip_pending=True)
