@@ -1,423 +1,124 @@
 import os
-import json
-import urllib.parse
+import logging
 import requests
-import telebot
-from telebot import types
-from flask import Flask
-from threading import Thread
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-# --- CONFIGURACIÓN PRINCIPAL ---
-BOT_TOKEN = "8998730541:AAE4p-o4lCvShtYy5alFEXnOFn5SCDmDtR0"
-ADMIN_ID = 6731555041
+# Configuración básica de logs para monitoreo en Railway
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-API_URL = "https://justanotherpanel.com/api/v2"
-API_KEY = "3625c0a8ec2d5e89b7172cfcbbc65955"
+# Configuración de credenciales
+# Puedes definirlos aquí directamente o vía Variables de Entorno en Railway
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "TU_TELEGRAM_BOT_TOKEN_AQUI")
+JAP_API_KEY = os.getenv("JAP_API_KEY", "3532b6a51bcc7638bcc9841c5cc1d425")
+JAP_API_URL = "https://justanotherpanel.com/api/v2"
 
-WHATSAPP_PHONE = "+5358960660"
-CALLMEBOT_APIKEY = ""
 
-bot = telebot.TeleBot(BOT_TOKEN)
-
-DATOS_PAGO = {
-    "tarjeta": "9238 1299 7952 7274",
-    "titular": "Daemon",
-    "telefono": "+5358960660",
-    "telegram_contacto": "Daemon0110"
-}
-
-def enviar_whatsapp(texto):
-    if not CALLMEBOT_APIKEY:
-        return
+def jap_request(payload: dict) -> dict:
+    """Envía peticiones al API de JustAnotherPanel."""
+    data = {
+        "key": JAP_API_KEY,
+        **payload
+    }
     try:
-        msg_encoded = urllib.parse.quote(texto)
-        url = f"https://api.callmebot.com/whatsapp.php?phone={WHATSAPP_PHONE}&text={msg_encoded}&apikey={CALLMEBOT_APIKEY}"
-        requests.get(url, timeout=10)
-    except Exception:
-        pass
+        response = requests.post(JAP_API_URL, data=data, timeout=30)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        logger.error(f"Error conectando con JAP: {e}")
+        return {"error": f"Fallo de conexión: {str(e)}"}
 
-def limpiar_link(link):
-    # Remueve parámetros sobrantes de seguimiento (como ?stkn=...)
-    return link.split("?")[0].strip()
 
-PAQUETES = {
-    # INSTAGRAM
-    "ig_likes": {
-        "tipo": "simple",
-        "red": "Instagram",
-        "nombre": "❤️ 1.000 Likes de Instagram",
-        "precio": 1000,
-        "service_id": 5956,
-        "cantidad": 1000,
-        "tipo_link": "enlace de la publicación o reel"
-    },
-    "ig_vistas": {
-        "tipo": "simple",
-        "red": "Instagram",
-        "nombre": "👁️ 1.000 Vistas de Reel / Video",
-        "precio": 1000,
-        "service_id": 6867,
-        "cantidad": 1000,
-        "tipo_link": "enlace del reel o video"
-    },
-    "ig_seguidores": {
-        "tipo": "simple",
-        "red": "Instagram",
-        "nombre": "👤 1.000 Seguidores Instagram (Garantía 30D)",
-        "precio": 3500,
-        "service_id": 7514,
-        "cantidad": 1000,
-        "tipo_link": "enlace de tu perfil público"
-    },
-    "ig_verificado": {
-        "tipo": "manual",
-        "red": "Instagram",
-        "nombre": "🔹 Verificación / Palomita Azul",
-        "precio": 0,
-        "tipo_link": "enlace de tu perfil"
-    },
-
-    # TIKTOK
-    "tt_vistas": {
-        "tipo": "simple",
-        "red": "TikTok",
-        "nombre": "👁️ 1.000 Vistas de TikTok",
-        "precio": 1000,
-        "service_id": 4412,
-        "cantidad": 1000,
-        "tipo_link": "enlace del video"
-    },
-    "tt_likes": {
-        "tipo": "simple",
-        "red": "TikTok",
-        "nombre": "❤️ 1.000 Likes de TikTok (Garantía 30D)",
-        "precio": 1000,
-        "service_id": 10026,
-        "cantidad": 1000,
-        "tipo_link": "enlace del video"
-    },
-    "tt_seguidores": {
-        "tipo": "simple",
-        "red": "TikTok",
-        "nombre": "👥 1.000 Seguidores TikTok (Garantía 30D)",
-        "precio": 3000,
-        "service_id": 10090,
-        "cantidad": 1000,
-        "tipo_link": "enlace de tu perfil"
-    },
-
-    # COMBOS
-    "combo_ig_completo": {
-        "tipo": "combo",
-        "red": "Combos",
-        "nombre": "🔥 Combo IG: 1.000 Seguidores + 500 Likes",
-        "precio": 5000,
-        "subservicios": [
-            {
-                "service_id": 7514,
-                "cantidad": 1000,
-                "label": "Seguidores",
-                "tipo_link": "enlace del perfil de Instagram"
-            },
-            {
-                "service_id": 5956,
-                "cantidad": 500,
-                "label": "Likes",
-                "tipo_link": "enlace de la publicación o reel"
-            }
-        ]
-    }
-}
-
-user_sessions = {}
-pedidos_pendientes = {}
-
-# --- SERVIDOR WEB ---
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "Bot en línea activo."
-
-def run_web():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
-
-# --- MENÚ PRINCIPAL ---
-@bot.message_handler(commands=['start'])
-def start_command(message):
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    btn_ig = types.InlineKeyboardButton("📸 Instagram", callback_data="cat_Instagram")
-    btn_tt = types.InlineKeyboardButton("🎵 TikTok", callback_data="cat_TikTok")
-    btn_combos = types.InlineKeyboardButton("🔥 Súper Combos", callback_data="cat_Combos")
-    btn_support = types.InlineKeyboardButton("💬 Soporte / Contacto", callback_data="btn_soporte")
-    markup.add(btn_ig, btn_tt)
-    markup.add(btn_combos)
-    markup.add(btn_support)
-
-    texto = (
-        f"👋 ¡Hola, *{message.from_user.first_name}*!\n\n"
-        "Bienvenido a **Impulso Redes Pro**.\n"
-        "Elige la plataforma que deseas potenciar:"
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando de inicio."""
+    user = update.effective_user.first_name
+    mensaje = (
+        f"👋 ¡Hola, {user}!\n\n"
+        "Bienvenido al bot de servicios SMM.\n\n"
+        "Comandos disponibles:\n"
+        "/balance - Consulta el saldo en JustAnotherPanel\n"
+        "/servicios - Consulta información de servicios\n"
+        "/orden <service_id> <enlace> <cantidad> - Crear un pedido"
     )
-    bot.send_message(message.chat.id, texto, reply_markup=markup, parse_mode="Markdown")
+    await update.message.reply_text(mensaje)
 
-@bot.callback_query_handler(func=lambda call: call.data == "btn_soporte")
-def handle_soporte(call):
-    bot.answer_callback_query(call.id)
-    texto = (
-        "💬 *Atención al Cliente y Soporte*\n\n"
-        f"👤 Contacto directo: [@{DATOS_PAGO['telegram_contacto']}](https://t.me/{DATOS_PAGO['telegram_contacto']})\n"
-        f"📱 Móvil / WhatsApp: `{DATOS_PAGO['telefono']}`\n\n"
-        "Escríbenos si tienes dudas con transferencias o pedidos personalizados."
-    )
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("💬 Escribir al Privado", url=f"https://t.me/{DATOS_PAGO['telegram_contacto']}"))
-    markup.add(types.InlineKeyboardButton("🔙 Volver al Inicio", callback_data="back_start"))
-    bot.send_message(call.message.chat.id, texto, reply_markup=markup, parse_mode="Markdown")
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("cat_"))
-def handle_category(call):
-    bot.answer_callback_query(call.id)
-    cat = call.data.split("_")[1]
+async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Consulta el saldo actual de la cuenta en JAP."""
+    await update.message.reply_text("⏳ Consultando saldo en JustAnotherPanel...")
     
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    for pkg_id, pkg in PAQUETES.items():
-        if pkg["red"] == cat:
-            if pkg["tipo"] == "manual":
-                btn_txt = f"{pkg['nombre']} (Consultar)"
-            else:
-                btn_txt = f"{pkg['nombre']} - {pkg['precio']:,} CUP"
-            markup.add(types.InlineKeyboardButton(btn_txt, callback_data=f"buy_{pkg_id}"))
+    result = jap_request({"action": "balance"})
     
-    markup.add(types.InlineKeyboardButton("🔙 Volver al Inicio", callback_data="back_start"))
-    bot.edit_message_text(f"🔥 *Ofertas disponibles en {cat}:*", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-
-@bot.callback_query_handler(func=lambda call: call.data == "back_start")
-def back_to_start(call):
-    bot.answer_callback_query(call.id)
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(types.InlineKeyboardButton("📸 Instagram", callback_data="cat_Instagram"),
-               types.InlineKeyboardButton("🎵 TikTok", callback_data="cat_TikTok"))
-    markup.add(types.InlineKeyboardButton("🔥 Súper Combos", callback_data="cat_Combos"))
-    markup.add(types.InlineKeyboardButton("💬 Soporte / Contacto", callback_data="btn_soporte"))
-    bot.edit_message_text("Selecciona una opción:", call.message.chat.id, call.message.message_id, reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
-def handle_buy(call):
-    bot.answer_callback_query(call.id)
-    pkg_id = call.data.split("_", 1)[1]
-    pkg = PAQUETES[pkg_id]
-    user_id = str(call.from_user.id)
-
-    if pkg["tipo"] == "manual":
-        texto = (
-            "🔹 *Servicio de Verificación (Palomita Azul)*\n\n"
-            "Este trámite requiere evaluación manual de perfil.\n\n"
-            f"Por favor contacta directamente al administrador:\n"
-            f"👉 [@{DATOS_PAGO['telegram_contacto']}](https://t.me/{DATOS_PAGO['telegram_contacto']})"
-        )
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("💬 Hablar con Soporte", url=f"https://t.me/{DATOS_PAGO['telegram_contacto']}"))
-        markup.add(types.InlineKeyboardButton("🔙 Volver", callback_data="cat_Instagram"))
-        bot.send_message(call.message.chat.id, texto, reply_markup=markup, parse_mode="Markdown")
-        return
-
-    if pkg["tipo"] == "simple":
-        user_sessions[user_id] = {
-            "pkg_id": pkg_id,
-            "step": "AWAIT_LINK"
-        }
-        texto = f"Has seleccionado: *{pkg['nombre']}*\n💰 *Precio:* {pkg['precio']:,} CUP\n\n👉 Envía el *{pkg['tipo_link']}*:"
+    if "balance" in result:
+        balance = result.get("balance")
+        currency = result.get("currency", "USD")
+        await update.message.reply_text(f"💰 Saldo disponible: {balance} {currency}")
+    elif "error" in result:
+        await update.message.reply_text(f"❌ Error al consultar saldo: {result['error']}")
     else:
-        user_sessions[user_id] = {
-            "pkg_id": pkg_id,
-            "step": "AWAIT_COMBO_LINK",
-            "sub_index": 0,
-            "links": []
-        }
-        sub = pkg["subservicios"][0]
-        texto = (
-            f"Has seleccionado: *{pkg['nombre']}*\n"
-            f"💰 *Precio:* {pkg['precio']:,} CUP\n\n"
-            f"👉 Envía el primer enlace (*{sub['tipo_link']}*):"
-        )
+        await update.message.reply_text(f"⚠️️ Respuesta inesperada: {result}")
 
-    bot.send_message(call.message.chat.id, texto, parse_mode="Markdown")
 
-@bot.message_handler(func=lambda msg: str(msg.from_user.id) in user_sessions and user_sessions[str(msg.from_user.id)].get("step") in ["AWAIT_LINK", "AWAIT_COMBO_LINK"])
-def handle_link_input(message):
-    user_id = str(message.from_user.id)
-    link = limpiar_link(message.text)
-
-    if not link.startswith("http"):
-        bot.reply_to(message, "⚠️ El enlace debe comenzar con `http://` o `https://`. Inténtalo de nuevo:")
-        return
-
-    session = user_sessions[user_id]
-    pkg = PAQUETES[session["pkg_id"]]
-
-    if session["step"] == "AWAIT_LINK":
-        session["links"] = [link]
-        session["step"] = "AWAIT_PAYMENT_PROOF"
-    elif session["step"] == "AWAIT_COMBO_LINK":
-        session["links"].append(link)
-        session["sub_index"] += 1
-        if session["sub_index"] < len(pkg["subservicios"]):
-            siguiente = pkg["subservicios"][session["sub_index"]]
-            bot.send_message(message.chat.id, f"✅ Recibido. Ahora envía el *{siguiente['tipo_link']}*:", parse_mode="Markdown")
-            return
-        else:
-            session["step"] = "AWAIT_PAYMENT_PROOF"
-
-    texto = (
-        f"✅ *Enlaces registrados.*\n\n"
-        f"📌 *Detalles del pedido:*\n"
-        f"• Servicio: *{pkg['nombre']}*\n"
-        f"• Total a pagar: *{pkg['precio']:,} CUP*\n\n"
-        "💳 *Datos de transferencia (Transfermóvil / EnZona):*\n"
-        f"• Tarjeta: `{DATOS_PAGO['tarjeta']}` *(toca para copiar)*\n"
-        f"• Titular: *{DATOS_PAGO['titular']}*\n"
-        f"• Móvil de confirmación: `{DATOS_PAGO['telefono']}`\n\n"
-        f"🆘 *Dudas:* [@{DATOS_PAGO['telegram_contacto']}](https://t.me/{DATOS_PAGO['telegram_contacto']})\n\n"
-        "📸 **Envía la captura de tu transferencia aquí mismo** para validar y activar tu pedido."
-    )
-    bot.send_message(message.chat.id, texto, parse_mode="Markdown")
-
-@bot.message_handler(content_types=['photo'], func=lambda msg: str(msg.from_user.id) in user_sessions and user_sessions[str(msg.from_user.id)].get("step") == "AWAIT_PAYMENT_PROOF")
-def handle_payment_proof(message):
-    user_id = str(message.from_user.id)
-    session = user_sessions[user_id]
-    pkg = PAQUETES[session["pkg_id"]]
-    order_key = f"{user_id}_{message.message_id}"
-
-    pedidos_pendientes[order_key] = {
-        "user_id": user_id,
-        "pkg": pkg,
-        "links": session["links"]
-    }
-
-    bot.send_message(
-        message.chat.id,
-        "⏳ *Comprobante recibido con éxito.*\nEl administrador revisará el pago en unos instantes y tu pedido se procesará automáticamente.",
-        parse_mode="Markdown"
-    )
-
-    file_id = message.photo[-1].file_id
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("✅ Aprobar y Enviar", callback_data=f"app_{order_key}"),
-        types.InlineKeyboardButton("❌ Rechazar", callback_data=f"rej_{order_key}")
-    )
-
-    caption = (
-        f"🔔 *Nuevo comprobante recibido:*\n\n"
-        f"👤 Cliente: [{message.from_user.first_name}](tg://user?id={user_id}) (`{user_id}`)\n"
-        f"📦 Servicio: {pkg['nombre']}\n"
-        f"💰 Monto: *{pkg['precio']:,} CUP*\n"
-        f"🔗 Enlaces: {', '.join(session['links'])}"
-    )
-    bot.send_photo(ADMIN_ID, file_id, caption=caption, reply_markup=markup, parse_mode="Markdown")
-
-    msg_wa = (
-        f"🔔 NUEVO PAGO RECIBIDO\n\n"
-        f"• Cliente: {message.from_user.first_name}\n"
-        f"• Paquete: {pkg['nombre']}\n"
-        f"• Monto: {pkg['precio']:,} CUP\n\n"
-        f"Abre Telegram para aprobar la orden."
-    )
-    enviar_whatsapp(msg_wa)
-    del user_sessions[user_id]
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith("app_") or call.data.startswith("rej_"))
-def handle_admin_decision(call):
-    if call.from_user.id != ADMIN_ID:
-        bot.answer_callback_query(call.id, "No tienes permisos.")
-        return
-
-    action, order_key = call.data.split("_", 1)
-    order = pedidos_pendientes.get(order_key)
-
-    if not order:
-        bot.answer_callback_query(call.id, "Este pedido ya fue procesado o no existe.")
-        return
-
-    user_id = order["user_id"]
-    pkg = order["pkg"]
-    links = order["links"]
-
-    if action == "app":
-        bot.answer_callback_query(call.id, "Enviando a JAP...")
-        ordenes_creadas = []
-        errores_jap = []
-
-        if pkg["tipo"] == "simple":
-            payload = {
-                "key": API_KEY,
-                "action": "add",
-                "service": pkg["service_id"],
-                "link": links[0],
-                "quantity": pkg["cantidad"]
-            }
-            try:
-                res = requests.post(API_URL, data=payload, timeout=20).json()
-                if "order" in res:
-                    ordenes_creadas.append(str(res["order"]))
-                else:
-                    errores_jap.append(res.get("error", str(res)))
-            except Exception as e:
-                errores_jap.append(str(e))
-        else:
-            for idx, sub in enumerate(pkg["subservicios"]):
-                payload = {
-                    "key": API_KEY,
-                    "action": "add",
-                    "service": sub["service_id"],
-                    "link": links[idx],
-                    "quantity": sub["cantidad"]
-                }
-                try:
-                    res = requests.post(API_URL, data=payload, timeout=20).json()
-                    if "order" in res:
-                        ordenes_creadas.append(f"{sub['label']}: #{res['order']}")
-                    else:
-                        errores_jap.append(f"{sub['label']}: {res.get('error', str(res))}")
-                except Exception as e:
-                    errores_jap.append(str(e))
-
-        if ordenes_creadas:
-            ids_str = ", ".join(ordenes_creadas)
-            bot.edit_message_caption(
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                caption=f"{call.message.caption}\n\n✅ *Aprobado.* Orden JAP ID: `{ids_str}`",
-                parse_mode="Markdown"
-            )
-            bot.send_message(
-                user_id,
-                f"🎉 *¡Pago confirmado y orden en proceso!*\n\n"
-                f"📌 Paquete: {pkg['nombre']}\n"
-                f"🆔 Pedido ID: `{ids_str}`\n\n"
-                "La entrega ha comenzado automáticamente.",
-                parse_mode="Markdown"
-            )
-        else:
-            detalles = " | ".join(errores_jap) if errores_jap else "Desconocido"
-            bot.send_message(ADMIN_ID, f"⚠️ *JAP devolvió este error:* `{detalles}`", parse_mode="Markdown")
-
-    elif action == "rej":
-        bot.answer_callback_query(call.id, "Pedido rechazado.")
-        bot.edit_message_caption(
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            caption=f"{call.message.caption}\n\n❌ *Rechazado por el administrador.*",
+async def orden_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Crea una orden en JustAnotherPanel."""
+    # Uso esperado: /orden <service_id> <enlace> <cantidad>
+    if len(context.args) < 3:
+        await update.message.reply_text(
+            "⚠️ Formato incorrecto.\n"
+            "Uso: `/orden <ID_SERVICIO> <ENLACE> <CANTIDAD>`\n"
+            "Ejemplo: `/orden 1024 https://instagram.com/usuario 1000`",
             parse_mode="Markdown"
         )
-        bot.send_message(user_id, "❌ Lo sentimos, tu comprobante no pudo ser verificado. Contacta con soporte.")
+        return
 
-    del pedidos_pendientes[order_key]
+    service_id = context.args[0]
+    link = context.args[1]
+    quantity = context.args[2]
 
-# --- INICIO ---
-if __name__ == "__main__":
-    Thread(target=run_web, daemon=True).start()
-    bot.infinity_polling(skip_pending=True)
+    await update.message.reply_text(f"⏳ Procesando orden para {link} ({quantity} unidades)...")
+
+    payload = {
+        "action": "add",
+        "service": service_id,
+        "link": link,
+        "quantity": quantity
+    }
+
+    result = jap_request(payload)
+
+    if "order" in result:
+        order_id = result.get("order")
+        await update.message.reply_text(f"✅ ¡Orden creada exitosamente!\n🆔 ID de Orden: `{order_id}`", parse_mode="Markdown")
+    elif "error" in result:
+        await update.message.reply_text(f"❌ Error al crear la orden: {result['error']}")
+    else:
+        await update.message.reply_text(f"⚠️ Respuesta del panel: {result}")
+
+
+async def servicios_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Verifica el estado de los servicios."""
+    await update.message.reply_text("⏳ Conectando con JAP para verificar conexión...")
+    result = jap_request({"action": "services"})
+    
+    if isinstance(result, list):
+        total = len(result)
+        await update.message.reply_text(f"✅ Conexión API válida. Total de servicios disponibles: {total}")
+    elif isinstance(result, dict) and "error" in result:
+        await update.message.reply_text(f"❌ Error devuelto por JAP: {result['error']}")
+    else:
+        await update.message.reply_text("⚠️ No se pudo obtener la lista de servicios.")
+
+
+def main():
+    if TELEGRAM_BOT_TOKEN == "TU_TELEGRAM_BOT_TOKEN_AQUI" or not TELEGRAM_BOT_TOKEN:
+        logger.error("No se ha configurado TELEGRAM_BOT_TOKEN.")
+        return
+
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+
+    # Handlers
+    app.add_handler(CommandHandler("start", start_command
