@@ -33,7 +33,6 @@ SERVICIOS = {
     "combo": {"id": "10129", "name": "🔥 Combo: 1k Seg + 500 Likes IG", "cup": 4000, "qty": 1000}
 }
 
-
 user_data = {}
 orders = {}
 
@@ -116,20 +115,4 @@ def on_photo(msg):
 def on_decision(call):
     act, oid = call.data.split('_', 1)
     od = orders.get(oid)
-    if not od:
-        bot.answer_callback_query(call.id, "Procesada.")
-        return
-    if act == "a":
-        res = call_jap(od['srv']['id'], od['link'], od['srv']['qty'])
-        if "order" in res:
-            bot.edit_message_caption(f"{call.message.caption}\n\n✅ *Aprobado JAP ID:* `{res['order']}`", chat_id=call.message.chat.id, message_id=call.message.message_id)
-            bot.send_message(od['uid'], f"🎉 ¡Pago aprobado! Tu orden de *{od['srv']['name']}* ya se está procesando.")
-        else:
-            bot.send_message(ADMIN_ID, f"⚠️ Error JAP: {res.get('error', res)}")
-    else:
-        bot.edit_message_caption(f"{call.message.caption}\n\n❌ *Rechazado*", chat_id=call.message.chat.id, message_id=call.message.message_id)
-        bot.send_message(od['uid'], "❌ Tu pago fue rechazado. Contacta a soporte.")
-    bot.answer_callback_query(call.id, "Listo")
-
-if __name__ == "__main__":
-    bot.infinity_polling(skip_pending=True)
+    if not
