@@ -1,4 +1,3 @@
-import os
 import logging
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -18,23 +17,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ================= CONFIGURACIÓN =================
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "TU_TOKEN_TELEGRAM_AQUI")
-ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "6731555041"))  # Tu ID de Telegram
+# ================= CONFIGURACIÓN DIRECTA =================
+TELEGRAM_BOT_TOKEN = "8998730541:AAE4p-o41CvShtYy5alFEXnOFn5SCDmDtR0"
+ADMIN_CHAT_ID = 6731555041
+
+# JustAnotherPanel
 JAP_API_KEY = "3532b6a51bcc7638bcc9841c5cc1d425"
 JAP_API_URL = "https://justanotherpanel.com/api/v2"
 
-# CallMeBot (WhatsApp Notificaciones)
-CALLMEBOT_PHONE = os.getenv("CALLMEBOT_PHONE", "")      # Ej: +53XXXXXXXX
-CALLMEBOT_API_KEY = os.getenv("CALLMEBOT_API_KEY", "")  # Tu apikey de callmebot
-
-# Tasa de cambio CUP
-TASA_CUP = 770.0
-
-# Catálogo de Servicios (ID de JAP, Nombre, Precio base USD aprox)
+# Catálogo de Servicios
 SERVICIOS = {
     "ig_likes_1000": {
-        "service_id": "1000", # Cambiar al ID real si usas otro
+        "service_id": "1234",
         "nombre": "❤️ 1.000 Likes de Instagram",
         "precio_cup": 1000,
         "cantidad": 1000
@@ -53,21 +47,18 @@ SERVICIOS = {
     }
 }
 
-# Estados para la conversación
 SELECT_SERVICE, ENTER_LINK, AWAIT_RECEIPT = range(3)
-
-# Memoria temporal de pedidos pendientes
 pending_orders = {}
 
-# ================= FUNCIONES AUXILIARES =================
+# ================= FUNCIONES =================
 def send_jap_order(service_id, link, quantity):
-    """Envía la orden directamente a JustAnotherPanel"""
+    """Envía la orden a JustAnotherPanel"""
     data = {
         "key": JAP_API_KEY,
         "action": "add",
-        "service": service_id,
+        "service": str(service_id),
         "link": link,
-        "quantity": quantity
+        "quantity": str(quantity)
     }
     try:
         response = requests.post(JAP_API_URL, data=data, timeout=30)
@@ -75,17 +66,6 @@ def send_jap_order(service_id, link, quantity):
     except Exception as e:
         return {"error": str(e)}
 
-def notify_whatsapp(mensaje):
-    """Envía alerta de comprobante por WhatsApp"""
-    if not CALLMEBOT_PHONE or not CALLMEBOT_API_KEY:
-        return
-    try:
-        url = f"https://api.callmebot.com/whatsapp.php?phone={CALLMEBOT_PHONE}&text={requests.utils.quote(mensaje)}&apikey={CALLMEBOT_API_KEY}"
-        requests.get(url, timeout=10)
-    except Exception as e:
-        logger.error(f"Error enviando WhatsApp: {e}")
-
-# ================= COMANDOS Y FLUJO =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     for s_key, s_data in SERVICIOS.items():
@@ -94,11 +74,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
         "🚀 *Bienvenido a Impulso Redes Pro*\n\n"
-        "Selecciona el servicio que deseas adquirir para potenciar tus redes:",
+        "Selecciona el servicio que deseas adquirir:",
         reply_markup=reply_markup,
         parse_mode="Markdown"
     )
     return SELECT_SERVICE
+
+async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Consulta el saldo disponible en JAP"""
+    if update.effective_user.id != ADMIN_CHAT_ID:
+        return
+    res = requests.post(JAP_API_URL, data={"key": JAP_API_KEY, "action": "balance"}).json()
+    if "balance" in res:
+        await update.message.reply_text(f"💰 Saldo en JAP: {res['balance']} {res.get('currency', 'USD')}")
+    else:
+        await update.message.reply_text(f"⚠️ Error JAP: {res.get('error', res)}")
 
 async def service_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -119,7 +109,7 @@ async def service_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def link_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     link = update.message.text.strip()
     if not (link.startswith("http://") or link.startswith("https://")):
-        await update.message.reply_text("⚠️ Por favor envía un enlace válido que comience con http:// o https://")
+        await update.message.reply_text("⚠️ Enlace no válido. Debe empezar con http:// o https://")
         return ENTER_LINK
 
     context.user_data["order_link"] = link
@@ -127,18 +117,18 @@ async def link_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     service = SERVICIOS[service_key]
 
     datos_pago = (
-        f"✅ *Datos confirmados:*\n"
+        f"✅ *Detalles de la compra:*\n"
         f"📦 Servicio: {service['nombre']}\n"
         f"🔗 Enlace: `{link}`\n"
         f"💵 Monto a transferir: *{service['precio_cup']} CUP*\n\n"
-        f"💳 Realiza la transferencia a los datos autorizados y envía una *foto/captura del comprobante* aquí mismo."
+        f"💳 Realiza el pago y envía la *captura del comprobante* aquí."
     )
     await update.message.reply_text(datos_pago, parse_mode="Markdown")
     return AWAIT_RECEIPT
 
 async def receipt_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    photo = update.message.photo[-1] # La imagen con mejor resolución
+    photo = update.message.photo[-1]
     service_key = context.user_data.get("selected_service")
     service = SERVICIOS[service_key]
     link = context.user_data.get("order_link")
@@ -147,12 +137,11 @@ async def receipt_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pending_orders[order_id] = {
         "user_id": user.id,
         "user_name": user.full_name,
-        "username": user.username or "Sin usuario",
         "service": service,
         "link": link
     }
 
-    # Botones para el Administrador
+    # Botones que recibe el Administrador
     admin_keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("✅ Aprobar y Enviar", callback_data=f"approve_{order_id}"),
@@ -162,25 +151,20 @@ async def receipt_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     admin_caption = (
         f"🔔 *Nuevo comprobante recibido:*\n\n"
-        f"👤 *Cliente:* {user.full_name} (`{user.id}`)\n"
-        f"📦 *Servicio:* {service['nombre']}\n"
-        f"💰 *Monto:* {service['precio_cup']} CUP\n"
-        f"🔗 *Enlaces:* {link}"
+        f"👤 Cliente: {user.full_name} (`{user.id}`)\n"
+        f"📦 Servicio: {service['nombre']}\n"
+        f"💰 Monto: {service['precio_cup']} CUP\n"
+        f"🔗 Enlaces: {link}"
     )
 
-    # Notificar al Administrador en Telegram
     await context.bot.send_photo(
         chat_id=ADMIN_CHAT_ID,
         photo=photo.file_id,
         caption=admin_caption,
-        reply_markup=admin_keyboard,
-        parse_mode="Markdown"
+        reply_markup=admin_keyboard
     )
 
-    # Alerta por WhatsApp
-    notify_whatsapp(f"Nuevo comprobante de {user.full_name} por {service['precio_cup']} CUP para {service['nombre']}")
-
-    await update.message.reply_text("✅ *Comprobante recibido con éxito.* En breves momentos tu pago será revisado y tu orden procesada.", parse_mode="Markdown")
+    await update.message.reply_text("✅ *Comprobante recibido con éxito.* En breves momentos tu pago será revisado.", parse_mode="Markdown")
     return ConversationHandler.END
 
 async def admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -192,11 +176,10 @@ async def admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     order = pending_orders.get(order_id)
 
     if not order:
-        await query.message.reply_text("⚠️ No se encontró la información de esta orden o ya fue procesada.")
+        await query.message.reply_text("⚠️️ No se encontró la información de esta orden o ya fue procesada.")
         return
 
     if action == "approve":
-        # Enviar orden a JustAnotherPanel
         res = send_jap_order(
             service_id=order["service"]["service_id"],
             link=order["link"],
@@ -204,29 +187,26 @@ async def admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         if "order" in res:
-            jap_order_id = res["order"]
+            jap_id = res["order"]
             await query.edit_message_caption(
-                caption=f"{query.message.caption_markdown}\n\n✅ *Aprobado y enviado a JAP*\n🆔 ID JAP: `{jap_order_id}`",
-                parse_mode="Markdown"
+                caption=f"{query.message.caption}\n\n✅ Orden Aprobada\n🆔 ID JAP: {jap_id}"
             )
             await context.bot.send_message(
                 chat_id=order["user_id"],
-                text=f"🎉 ¡Tu pago ha sido aprobado! Tu orden de *{order['service']['nombre']}* está en camino.",
-                parse_mode="Markdown"
+                text=f"🎉 ¡Tu pago ha sido aprobado! Tu orden de {order['service']['nombre']} está en camino."
             )
         elif "error" in res:
             await query.message.reply_text(f"⚠️ JAP devolvió este error: {res['error']}")
         else:
-            await query.message.reply_text(f"⚠️ Respuesta inesperada de JAP: {res}")
+            await query.message.reply_text(f"⚠️ Respuesta del panel: {res}")
 
     elif action == "reject":
         await query.edit_message_caption(
-            caption=f"{query.message.caption_markdown}\n\n❌ *Comprobante Rechazado*",
-            parse_mode="Markdown"
+            caption=f"{query.message.caption}\n\n❌ Comprobante Rechazado"
         )
         await context.bot.send_message(
             chat_id=order["user_id"],
-            text="❌ Lo sentimos, tu comprobante no pudo ser verificado. Contacta a soporte para más detalles."
+            text="❌ Tu comprobante no pudo ser verificado. Contacta a soporte."
         )
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -247,6 +227,7 @@ def main():
     )
 
     app.add_handler(conv_handler)
+    app.add_handler(CommandHandler("balance", balance_cmd))
     app.add_handler(CallbackQueryHandler(admin_buttons, pattern="^(approve|reject)_"))
 
     logger.info("Impulso Redes Pro en línea.")
