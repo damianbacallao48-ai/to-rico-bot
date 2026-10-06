@@ -5,7 +5,7 @@ import telebot
 from telebot import types
 from flask import Flask
 
-# Servidor Flask para mantener activo Railway
+# Servidor Flask para mantener activo Railway sin apagarse
 app = Flask(__name__)
 
 @app.route('/')
@@ -16,15 +16,16 @@ def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
 
-# Credenciales
-TELEGRAM_BOT_TOKEN = "8998730541:AAE4p-o41CvShtYy5alFEXnOFn5SCDmDtR0"
+# ================= CREDENCIALES EXACTAS =================
+TELEGRAM_BOT_TOKEN = "8998730541:AAE4p-o4lCvShtYy5alFEXnOFn5SCDmDtR0"
 ADMIN_CHAT_ID = 6731555041
+
 JAP_API_KEY = "3532b6a51bcc7638bcc9841c5cc1d425"
 JAP_API_URL = "https://justanotherpanel.com/api/v2"
 
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 
-# Servicios
+# Servicios de Impulso Redes Pro
 SERVICIOS = {
     "ig_likes_1000": {
         "service_id": "1234",
