@@ -5,24 +5,27 @@ import telebot
 from telebot import types
 from flask import Flask
 
-# ================= SERVIDOR WEB (HEALTHCHECK RAILWAY) =================
+# Servidor Flask para mantener activo Railway
 app = Flask(__name__)
 
 @app.route('/')
 def home():
     return "OK", 200
 
-# ================= CREDENCIALES EXACTAS =================
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
+
+# Credenciales exactas
 TELEGRAM_BOT_TOKEN = "8998730541:AAE4p-o4lCvShtYy5alFEXnOFn5SCDmDtR0"
 ADMIN_CHAT_ID = 6731555041
 
-# Clave corregida exactamente con terminación 125
 JAP_API_KEY = "3532b6a51bcc7638bcc9841c5cc1d125"
 JAP_API_URL = "https://justanotherpanel.com/api/v2"
 
-bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, threaded=True)
+bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 
-# ================= CATÁLOGO DE SERVICIOS Y COMBOS =================
+# Servicios y ofertas
 SERVICIOS = {
     "ig_likes_1000": {
         "service_id": "1234",
@@ -97,7 +100,7 @@ def check_balance(message):
     if "balance" in res:
         bot.reply_to(message, f"💰 Saldo en JAP: {res['balance']} {res.get('currency', 'USD')}")
     else:
-        bot.reply_to(message, f"⚠️️ Error JAP: {res.get('error', res)}")
+        bot.reply_to(message, f"⚠️ Error JAP: {res.get('error', res)}")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('buy_'))
 def handle_buy(call):
@@ -177,4 +180,45 @@ def handle_photo(message):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith(('approve_', 'reject_')))
 def handle_admin_action(call):
-    action, order_id = call.
+    action, order_id = call.data.split('_', 1)
+    order = pending_orders.get(order_id)
+    chat_id = call.message.chat.id
+    msg_id = call.message.message_id
+
+    if not order:
+        bot.answer_callback_query(call.id, "Esta orden ya fue tramitada.")
+        return
+
+    if action == "approve":
+        res = send_jap_order(order["service"]["service_id"], order["link"], order["service"]["cantidad"])
+        if "order" in res:
+            jap_id = res["order"]
+            bot.edit_message_caption(
+                caption=f"{call.message.caption}\n\n✅ *Aprobado y Enviado a JAP*\n🆔 ID JAP: `{jap_id}`",
+                chat_id=chat_id,
+                message_id=msg_id,
+                parse_mode="Markdown"
+            )
+            bot.send_message(
+                order["user_id"],
+                f"🎉 ¡Tu pago ha sido confirmado! Tu orden de *{order['service']['nombre']}* ya está en marcha."
+            )
+            bot.answer_callback_query(call.id, "¡Orden enviada a JAP con éxito!")
+        else:
+            err_msg = res.get("error", res)
+            bot.send_message(ADMIN_CHAT_ID, f"⚠️ Error JAP: {err_msg}")
+            bot.answer_callback_query(call.id, "Error en JAP")
+
+    elif action == "reject":
+        bot.edit_message_caption(
+            caption=f"{call.message.caption}\n\n❌ *Comprobante Rechazado*",
+            chat_id=chat_id,
+            message_id=msg_id,
+            parse_mode="Markdown"
+        )
+        bot.send_message(order["user_id"], "❌ Tu comprobante no pudo ser verificado. Contacta a soporte.")
+        bot.answer_callback_query(call.id, "Orden rechazada")
+
+if __name__ == "__main__":
+    threading.Thread(target=run_flask, daemon=True).start()
+    bot.infinity_polling(skip_pending=True)
