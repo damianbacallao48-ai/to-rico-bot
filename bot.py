@@ -20,7 +20,8 @@ def run_flask():
 TELEGRAM_BOT_TOKEN = "8998730541:AAE4p-o4lCvShtYy5alFEXnOFn5SCDmDtR0"
 ADMIN_CHAT_ID = 6731555041
 
-JAP_API_KEY = "3532b6a51bcc7638bcc9841c5cc1d125"
+# Nueva API Key de JAP
+JAP_API_KEY = "b1aede7e7f18cdf8de142d14b2967e10"
 JAP_API_URL = "https://justanotherpanel.com/api/v2"
 
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
