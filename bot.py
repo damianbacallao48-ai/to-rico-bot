@@ -5,22 +5,18 @@ import telebot
 from telebot import types
 from flask import Flask
 
-# ================= 1. SERVIDOR FLASK (HEALTHCHECK RAILWAY) =================
+# ================= 1. SERVIDOR WEB (MANTIENE ACTIVO RAILWAY 24/7) =================
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "OK", 200
-
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+    return "Bot en linea", 200
 
 # ================= 2. CREDENCIALES EXACTAS =================
 TELEGRAM_BOT_TOKEN = "8998730541:AAE4p-o4lCvShtYy5alFEXnOFn5SCDmDtR0"
 ADMIN_CHAT_ID = 6731555041
 
-# Clave confirmada y autenticada con JAP ($5.25 USD)
+# Clave verificada con saldo en JAP ($5.25 USD)
 JAP_API_KEY = "b1aede7e7f18cdf8de142d14b2967e10"
 JAP_API_URL = "https://justanotherpanel.com/api/v2"
 
@@ -73,55 +69,7 @@ SERVICIOS = {
 user_data = {}
 pending_orders = {}
 
-# ================= 4. FUNCIÓN API JAP =================
+# ================= 4. CONEXIÓN API JAP =================
 def send_jap_order(service_id, link, quantity):
     payload = {
-        "key": JAP_API_KEY,
-        "action": "add",
-        "service": str(service_id),
-        "link": link,
-        "quantity": str(quantity)
-    }
-    try:
-        r = requests.post(JAP_API_URL, data=payload, timeout=30)
-        return r.json()
-    except Exception as e:
-        return {"error": str(e)}
-
-# ================= 5. COMANDOS BÁSICOS =================
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    chat_id = message.chat.id
-    user_data.pop(chat_id, None)  # Resetea cualquier estado anterior
-    
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    for key, data in SERVICIOS.items():
-        markup.add(
-            types.InlineKeyboardButton(
-                f"{data['nombre']} ➔ {data['precio_cup']} CUP",
-                callback_data=f"buy_{key}"
-            )
-        )
-    
-    bot.send_message(
-        chat_id,
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "⚡ *IMPULSO REDES PRO* ⚡\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Selecciona el servicio que deseas adquirir:",
-        parse_mode="Markdown",
-        reply_markup=markup
-    )
-
-@bot.message_handler(commands=['balance'])
-def check_balance(message):
-    if message.from_user.id != ADMIN_CHAT_ID:
-        return
-    try:
-        res = requests.post(JAP_API_URL, data={"key": JAP_API_KEY, "action": "balance"}, timeout=15).json()
-        if "balance" in res:
-            bot.reply_to(message, f"💰 Saldo en JAP: {res['balance']} {res.get('currency', 'USD')}")
-        else:
-            bot.reply_to(message, f"⚠️ Error JAP: {res.get('error', res)}")
-    except Exception as e:
-        bot.reply_to
+        "key": JAP_API_
