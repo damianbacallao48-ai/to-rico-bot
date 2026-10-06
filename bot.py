@@ -11,21 +11,18 @@ from telegram.ext import (
     ContextTypes,
 )
 
-# Configuración de logs
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# ================= CONFIGURACIÓN DIRECTA =================
+# ================= CREDENCIALES DIRECTAS =================
 TELEGRAM_BOT_TOKEN = "8998730541:AAE4p-o41CvShtYy5alFEXnOFn5SCDmDtR0"
 ADMIN_CHAT_ID = 6731555041
-
-# JustAnotherPanel
 JAP_API_KEY = "3532b6a51bcc7638bcc9841c5cc1d425"
 JAP_API_URL = "https://justanotherpanel.com/api/v2"
 
-# Catálogo de Servicios
+# Servicios
 SERVICIOS = {
     "ig_likes_1000": {
         "service_id": "1234",
@@ -50,9 +47,7 @@ SERVICIOS = {
 SELECT_SERVICE, ENTER_LINK, AWAIT_RECEIPT = range(3)
 pending_orders = {}
 
-# ================= FUNCIONES =================
 def send_jap_order(service_id, link, quantity):
-    """Envía la orden a JustAnotherPanel"""
     data = {
         "key": JAP_API_KEY,
         "action": "add",
@@ -81,7 +76,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return SELECT_SERVICE
 
 async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Consulta el saldo disponible en JAP"""
     if update.effective_user.id != ADMIN_CHAT_ID:
         return
     res = requests.post(JAP_API_URL, data={"key": JAP_API_KEY, "action": "balance"}).json()
@@ -141,7 +135,6 @@ async def receipt_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "link": link
     }
 
-    # Botones que recibe el Administrador
     admin_keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("✅ Aprobar y Enviar", callback_data=f"approve_{order_id}"),
@@ -176,7 +169,7 @@ async def admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     order = pending_orders.get(order_id)
 
     if not order:
-        await query.message.reply_text("⚠️️ No se encontró la información de esta orden o ya fue procesada.")
+        await query.message.reply_text("⚠️ No se encontró la información de esta orden o ya fue procesada.")
         return
 
     if action == "approve":
