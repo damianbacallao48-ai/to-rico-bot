@@ -8,15 +8,35 @@ ADMIN_ID = 6731555041
 JAP_KEY = "b1aede7e7f18cdf8de142d14b2967e10"
 JAP_URL = "https://justanotherpanel.com/api/v2"
 
+# Datos de pago para el cliente
+DATOS_PAGO = {
+    "tarjeta": "9238-1299-7952-7274",
+    "nombre": "Daemon",
+    "telefono": "+5358960660"
+}
+
 bot = telebot.TeleBot(TOKEN)
 
 SERVICIOS = {
-    "ig_fol": {"id": "10129", "name": "👥 1.000 Seguidores IG (Garantía 30D)", "cup": 3500, "qty": 1000},
-    "ig_likes": {"id": "10130", "name": "❤️ 1.000 Likes IG (Garantía 30D)", "cup": 1000, "qty": 1000},
-    "tt_views": {"id": "10333", "name": "👀 10.000 Vistas TikTok", "cup": 800, "qty": 10000},
+    # Instagram Seguidores (30D Garantía)
+    "ig_fol": {"id": "10129", "name": "👥 1.000 Seguidores IG (Garantía 30D)", "cup": 4000, "qty": 1000},
+    
+    # Instagram Likes (30D Garantía)
+    "ig_likes": {"id": "10130", "name": "❤️ 1.000 Likes IG (Garantía 30D)", "cup": 1500, "qty": 1000},
+    
+    # TikTok 10k
+    "tt_likes": {"id": "10333", "name": "❤️ 10.000 Likes TikTok VIP", "cup": 2500, "qty": 10000},
+    
+    # TikTok Seguidores (30D Garantía)
     "tt_fol": {"id": "9777", "name": "🎵 1.000 Seguidores TikTok (Garantía 30D)", "cup": 3000, "qty": 1000},
-    "fb_fol": {"id": "1724", "name": "👍 1.000 Seguidores FB Página", "cup": 2000, "qty": 1000},
+    
+    # Facebook Seguidores de Página
+    "fb_fol": {"id": "1724", "name": "👍 1.000 Seguidores FB Página", "cup": 3000, "qty": 1000},
+    
+    # Facebook Likes de Página (30D Garantía)
     "fb_likes": {"id": "9230", "name": "💙 1.000 Likes FB Página (Garantía 30D)", "cup": 1500, "qty": 1000},
+    
+    # Combo: 1k Seg (ID 10129) + 500 Likes IG
     "combo": {"id": "10129", "name": "🔥 Combo: 1k Seg + 500 Likes IG", "cup": 4000, "qty": 1000}
 }
 
@@ -24,10 +44,16 @@ user_data = {}
 orders = {}
 
 def call_jap(srv_id, link, qty):
+    data = {
+        "key": JAP_KEY,
+        "action": "add",
+        "service": str(srv_id),
+        "link": link,
+        "quantity": str(qty)
+    }
     try:
-        data = {"key": JAP_KEY, "action": "add", "service": str(srv_id), "link": link, "quantity": str(qty)}
-        res = requests.post(JAP_URL, data=data, timeout=25)
-        return res.json()
+        req = requests.post(JAP_URL, data=data, timeout=25)
+        return req.json()
     except Exception as e:
         return {"error": str(e)}
 
@@ -59,7 +85,7 @@ def on_select(call):
         return
     user_data[uid] = {'key': key, 'step': 'link'}
     bot.answer_callback_query(call.id)
-    bot.send_message(uid, f"Seleccionaste: *{srv['name']}*\nPrecio: *{srv['cup']} CUP*\n\n🔗 Envía el enlace:")
+    bot.send_message(uid, f"Seleccionaste: *{srv['name']}*\nPrecio: *{srv['cup']} CUP*\n\n🔗 Envía el enlace de tu perfil o publicación:")
 
 @bot.message_handler(content_types=['text'])
 def on_text(msg):
@@ -73,7 +99,17 @@ def on_text(msg):
         user_data[uid]['link'] = txt
         user_data[uid]['step'] = 'proof'
         srv = SERVICIOS[st['key']]
-        bot.reply_to(msg, f"✅ Enlace recibido: `{txt}`\nTotal: *{srv['cup']} CUP*\n\n💳 Envía ahora la foto del comprobante.")
+        
+        texto_pago = (
+            f"✅ *Enlace recibido:* `{txt}`\n"
+            f"💰 *Total a pagar:* *{srv['cup']} CUP*\n\n"
+            f"💳 *Datos de transferencia:*\n"
+            f"• Tarjeta: `{DATOS_PAGO['tarjeta']}`\n"
+            f"• Titular: *{DATOS_PAGO['nombre']}*\n"
+            f"• Móvil: `{DATOS_PAGO['telefono']}`\n\n"
+            f"📸 *Envía ahora la captura o foto del comprobante de pago.*"
+        )
+        bot.reply_to(msg, texto_pago, parse_mode="Markdown")
     else:
         bot.reply_to(msg, "Usa /start para iniciar un pedido.")
 
@@ -94,12 +130,18 @@ def on_photo(msg):
         types.InlineKeyboardButton("✅ Aprobar", callback_data=f"a_{oid}"),
         types.InlineKeyboardButton("❌ Rechazar", callback_data=f"r_{oid}")
     )
-    cap = f"🔔 *Nuevo Pago*\nCliente: {msg.from_user.first_name} (`{uid}`)\n{srv['name']}\nEnlace: `{st['link']}`"
+    cap = (
+        f"🔔 *Nuevo Pago Recibido*\n"
+        f"👤 Cliente: {msg.from_user.first_name} (`{uid}`)\n"
+        f"📦 Servicio: {srv['name']}\n"
+        f"💵 Monto: *{srv['cup']} CUP*\n"
+        f"🔗 Enlace: `{st['link']}`"
+    )
     bot.send_photo(ADMIN_ID, pid, caption=cap, parse_mode="Markdown", reply_markup=kb)
-    bot.reply_to(msg, "✅ Comprobante recibido. Revisando...")
+    bot.reply_to(msg, "✅ Comprobante recibido. Revisando tu pago para activar la orden...")
     user_data.pop(uid, None)
 
-@bot.callback_query_handler(func=func_decision if 'func_decision' in locals() else (lambda c: c.data.startswith(('a_', 'r_'))))
+@bot.callback_query_handler(func=lambda c: c.data.startswith(('a_', 'r_')))
 def on_decision(call):
     act, oid = call.data.split('_', 1)
     od = orders.get(oid)
@@ -110,12 +152,12 @@ def on_decision(call):
         res = call_jap(od['srv']['id'], od['link'], od['srv']['qty'])
         if "order" in res:
             bot.edit_message_caption(f"{call.message.caption}\n\n✅ *Aprobado JAP ID:* `{res['order']}`", chat_id=call.message.chat.id, message_id=call.message.message_id)
-            bot.send_message(od['uid'], f"🎉 ¡Pago aprobado! Tu orden de *{od['srv']['name']}* ya se está procesando.")
+            bot.send_message(od['uid'], f"🎉 ¡Pago confirmado! Tu orden de *{od['srv']['name']}* ya se está procesando.")
         else:
             bot.send_message(ADMIN_ID, f"⚠️ Error JAP: {res.get('error', res)}")
     else:
         bot.edit_message_caption(f"{call.message.caption}\n\n❌ *Rechazado*", chat_id=call.message.chat.id, message_id=call.message.message_id)
-        bot.send_message(od['uid'], "❌ Tu pago fue rechazado. Contacta a soporte.")
+        bot.send_message(od['uid'], "❌ Tu comprobante fue rechazado. Revisa tu pago o contacta a soporte.")
     bot.answer_callback_query(call.id, "Listo")
 
 if __name__ == "__main__":
