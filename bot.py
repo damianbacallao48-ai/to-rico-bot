@@ -20,40 +20,50 @@ def run_flask():
 TELEGRAM_BOT_TOKEN = "8998730541:AAE4p-o4lCvShtYy5alFEXnOFn5SCDmDtR0"
 ADMIN_CHAT_ID = 6731555041
 
-# Nueva API Key de JAP
+# API Key verificada y confirmada con saldo de JAP
 JAP_API_KEY = "b1aede7e7f18cdf8de142d14b2967e10"
 JAP_API_URL = "https://justanotherpanel.com/api/v2"
 
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 
-# Servicios y ofertas
+# Servicios y ofertas con IDs reales de JustAnotherPanel
 SERVICIOS = {
+    # --- INSTAGRAM ---
     "ig_likes_1000": {
-        "service_id": "1234",
+        "service_id": "1910",
         "nombre": "❤️ 1.000 Likes de Instagram",
         "precio_cup": 1000,
         "cantidad": 1000
     },
     "ig_followers_1000": {
-        "service_id": "1001",
+        "service_id": "1810",
         "nombre": "👥 1.000 Seguidores de Instagram",
         "precio_cup": 3500,
         "cantidad": 1000
     },
-    "tt_views_1000": {
-        "service_id": "1002",
-        "nombre": "👀 1.000 Vistas TikTok",
-        "precio_cup": 1000,
+    # --- TIKTOK ---
+    "tt_views_10000": {
+        "service_id": "10033",
+        "nombre": "👀 10.000 Vistas TikTok",
+        "precio_cup": 800,
+        "cantidad": 10000
+    },
+    # --- FACEBOOK ---
+    "fb_followers_1000": {
+        "service_id": "1889",
+        "nombre": "👍 1.000 Seguidores de Página Facebook",
+        "precio_cup": 2000,
         "cantidad": 1000
     },
-    "tt_followers_1000": {
-        "service_id": "1003",
-        "nombre": "👤 1.000 Seguidores TikTok",
-        "precio_cup": 3000,
+    "fb_likes_1000": {
+        "service_id": "1722",
+        "nombre": "💙 1.000 Likes Facebook (Posts)",
+        "precio_cup": 1500,
         "cantidad": 1000
     },
+    # --- COMBOS ---
     "combo_ig_1": {
-        "service_id": "1001",
+        "service_id": "1810",
         "nombre": "🔥 Combo: 1.000 Seg + 500 Likes IG",
         "precio_cup": 5000,
         "cantidad": 1000
