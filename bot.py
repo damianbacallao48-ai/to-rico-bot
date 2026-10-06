@@ -1,15 +1,30 @@
-import time
+import os
+import threading
 import requests
+import telebot
+from telebot import types
+from flask import Flask
 
-# ================= CONFIGURACIÓN =================
+# Servidor Flask para mantener activo Railway
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot en línea"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
+
+# Credenciales
 TELEGRAM_BOT_TOKEN = "8998730541:AAE4p-o41CvShtYy5alFEXnOFn5SCDmDtR0"
 ADMIN_CHAT_ID = 6731555041
-
 JAP_API_KEY = "3532b6a51bcc7638bcc9841c5cc1d425"
 JAP_API_URL = "https://justanotherpanel.com/api/v2"
-TG_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
-# Servicios disponibles
+bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
+
+# Servicios
 SERVICIOS = {
     "ig_likes_1000": {
         "service_id": "1234",
@@ -31,11 +46,11 @@ SERVICIOS = {
     }
 }
 
-user_states = {}
+user_data = {}
 pending_orders = {}
 
 def send_jap_order(service_id, link, quantity):
-    payload = {
+    data = {
         "key": JAP_API_KEY,
         "action": "add",
         "service": str(service_id),
@@ -43,178 +58,122 @@ def send_jap_order(service_id, link, quantity):
         "quantity": str(quantity)
     }
     try:
-        r = requests.post(JAP_API_URL, data=payload, timeout=25)
+        r = requests.post(JAP_API_URL, data=data, timeout=30)
         return r.json()
     except Exception as e:
         return {"error": str(e)}
 
-def tg_send_message(chat_id, text, reply_markup=None):
-    data = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
-    if reply_markup:
-        data["reply_markup"] = reply_markup
-    try:
-        requests.post(f"{TG_API_URL}/sendMessage", json=data, timeout=15)
-    except Exception:
-        pass
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    markup = types.InlineKeyboardMarkup()
+    for key, data in SERVICIOS.items():
+        markup.add(types.InlineKeyboardButton(f"{data['nombre']} - {data['precio_cup']} CUP", callback_data=f"buy_{key}"))
+    bot.reply_to(message, "🚀 *Bienvenido a Impulso Redes Pro*\n\nSelecciona el servicio que deseas adquirir:", parse_mode="Markdown", reply_markup=markup)
 
-def tg_send_photo(chat_id, photo_id, caption, reply_markup=None):
-    data = {"chat_id": chat_id, "photo": photo_id, "caption": caption, "parse_mode": "Markdown"}
-    if reply_markup:
-        data["reply_markup"] = reply_markup
-    try:
-        requests.post(f"{TG_API_URL}/sendPhoto", json=data, timeout=15)
-    except Exception:
-        pass
+@bot.message_handler(commands=['balance'])
+def check_balance(message):
+    if message.from_user.id != ADMIN_CHAT_ID:
+        return
+    res = requests.post(JAP_API_URL, data={"key": JAP_API_KEY, "action": "balance"}).json()
+    if "balance" in res:
+        bot.reply_to(message, f"💰 Saldo en JAP: {res['balance']} {res.get('currency', 'USD')}")
+    else:
+        bot.reply_to(message, f"⚠️ Error JAP: {res.get('error', res)}")
 
-def tg_edit_caption(chat_id, message_id, caption):
-    data = {"chat_id": chat_id, "message_id": message_id, "caption": caption, "parse_mode": "Markdown"}
-    try:
-        requests.post(f"{TG_API_URL}/editMessageCaption", json=data, timeout=15)
-    except Exception:
-        pass
+@bot.callback_query_handler(func=lambda call: call.data.startswith('buy_'))
+def handle_buy(call):
+    service_key = call.data.replace('buy_', '')
+    service = SERVICIOS.get(service_key)
+    chat_id = call.message.chat.id
+    user_data[chat_id] = {'service_key': service_key, 'step': 'link'}
+    bot.edit_message_text(
+        f"Has seleccionado: *{service['nombre']}*\n💰 Total: *{service['precio_cup']} CUP*\n\n🔗 *Envía el enlace directo de tu publicación o perfil:*",
+        chat_id=chat_id,
+        message_id=call.message.message_id,
+        parse_mode="Markdown"
+    )
 
-def handle_update(update):
-    if "callback_query" in update:
-        cb = update["callback_query"]
-        cb_id = cb["id"]
-        from_user = cb["from"]
-        chat_id = from_user["id"]
-        data = cb.get("data", "")
-        message = cb.get("message", {})
-        msg_id = message.get("message_id")
+@bot.message_handler(func=lambda message: user_data.get(message.chat.id, {}).get('step') == 'link')
+def handle_link(message):
+    chat_id = message.chat.id
+    link = message.text.strip()
+    if not (link.startswith("http://") or link.startswith("https://")):
+        bot.reply_to(message, "⚠️ Envía un enlace válido (iniciando con http:// o https://)")
+        return
+    user_data[chat_id]['link'] = link
+    user_data[chat_id]['step'] = 'receipt'
+    s_key = user_data[chat_id]['service_key']
+    service = SERVICIOS[s_key]
+    bot.reply_to(
+        message,
+        f"✅ *Detalles:*\n📦 {service['nombre']}\n🔗 `{link}`\n💵 *{service['precio_cup']} CUP*\n\n💳 Envía una *foto del comprobante de transferencia* aquí.",
+        parse_mode="Markdown"
+    )
 
-        requests.post(f"{TG_API_URL}/answerCallbackQuery", json={"callback_query_id": cb_id})
+@bot.message_handler(content_types=['photo'])
+def handle_photo(message):
+    chat_id = message.chat.id
+    if user_data.get(chat_id, {}).get('step') != 'receipt':
+        return
+    
+    photo_id = message.photo[-1].file_id
+    order_id = str(message.message_id)
+    s_key = user_data[chat_id]['service_key']
+    service = SERVICIOS[s_key]
+    link = user_data[chat_id]['link']
 
-        if data.startswith("buy_"):
-            service_key = data.replace("buy_", "")
-            service = SERVICIOS.get(service_key)
-            if service:
-                user_states[chat_id] = {"step": "waiting_link", "service_key": service_key}
-                tg_send_message(
-                    chat_id,
-                    f"Has seleccionado: *{service['nombre']}*\n"
-                    f"💰 Total a pagar: *{service['precio_cup']} CUP*\n\n"
-                    "🔗 *Envía el enlace directo de tu publicación o perfil:*"
-                )
+    pending_orders[order_id] = {
+        'user_id': chat_id,
+        'user_name': message.from_user.first_name,
+        'service': service,
+        'link': link
+    }
 
-        elif data.startswith("approve_"):
-            order_id = data.replace("approve_", "")
-            order = pending_orders.get(order_id)
-            if order:
-                res = send_jap_order(
-                    order["service"]["service_id"],
-                    order["link"],
-                    order["service"]["cantidad"]
-                )
-                if "order" in res:
-                    jap_id = res["order"]
-                    tg_edit_caption(ADMIN_CHAT_ID, msg_id, f"✅ *Orden Aprobada y Enviada*\n🆔 ID JAP: `{jap_id}`")
-                    tg_send_message(order["user_id"], f"🎉 ¡Tu pago ha sido confirmado! Tu orden de *{order['service']['nombre']}* está en marcha.")
-                else:
-                    err_msg = res.get("error", str(res))
-                    tg_send_message(ADMIN_CHAT_ID, f"⚠️ JAP devolvió este error: {err_msg}")
-            else:
-                tg_send_message(ADMIN_CHAT_ID, "⚠️ No se encontró la orden en memoria.")
+    markup = types.InlineKeyboardMarkup()
+    markup.add(
+        types.InlineKeyboardButton("✅ Aprobar y Enviar", callback_data=f"approve_{order_id}"),
+        types.InlineKeyboardButton("❌ Rechazar", callback_data=f"reject_{order_id}")
+    )
 
-        elif data.startswith("reject_"):
-            order_id = data.replace("reject_", "")
-            order = pending_orders.get(order_id)
-            tg_edit_caption(ADMIN_CHAT_ID, msg_id, "❌ *Comprobante Rechazado*")
-            if order:
-                tg_send_message(order["user_id"], "❌ Tu comprobante no pudo ser verificado. Contacta a soporte.")
+    caption = (
+        f"🔔 *Nuevo comprobante recibido:*\n\n"
+        f"👤 Cliente: {message.from_user.first_name} (`{chat_id}`)\n"
+        f"📦 Servicio: {service['nombre']}\n"
+        f"💰 Monto: {service['precio_cup']} CUP\n"
+        f"🔗 Enlace: {link}"
+    )
 
+    bot.send_photo(ADMIN_CHAT_ID, photo_id, caption=caption, reply_markup=markup, parse_mode="Markdown")
+    bot.reply_to(message, "✅ *Comprobante recibido con éxito.* En breves momentos será revisado.", parse_mode="Markdown")
+    user_data.pop(chat_id, None)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith(('approve_', 'reject_')))
+def handle_admin_action(call):
+    action, order_id = call.data.split('_', 1)
+    order = pending_orders.get(order_id)
+    chat_id = call.message.chat.id
+    msg_id = call.message.message_id
+
+    if not order:
+        bot.answer_callback_query(call.id, "Orden no encontrada o ya procesada.")
         return
 
-    if "message" not in update:
-        return
-
-    msg = update["message"]
-    chat_id = msg["chat"]["id"]
-    text = msg.get("text", "")
-    from_user = msg.get("from", {})
-    user_name = from_user.get("first_name", "Cliente")
-
-    if text == "/start":
-        buttons = []
-        for s_key, s_data in SERVICIOS.items():
-            buttons.append([{"text": f"{s_data['nombre']} - {s_data['precio_cup']} CUP", "callback_data": f"buy_{s_key}"}])
-        keyboard = {"inline_keyboard": buttons}
-        tg_send_message(
-            chat_id,
-            "🚀 *Bienvenido a Impulso Redes Pro*\n\nSelecciona el servicio que deseas adquirir:",
-            reply_markup=keyboard
-        )
-        user_states[chat_id] = {"step": "waiting_selection"}
-        return
-
-    state = user_states.get(chat_id, {}).get("step")
-
-    if state == "waiting_link":
-        if text.startswith("http://") or text.startswith("https://"):
-            s_key = user_states[chat_id]["service_key"]
-            service = SERVICIOS[s_key]
-            user_states[chat_id] = {"step": "waiting_receipt", "service_key": s_key, "link": text}
-            tg_send_message(
-                chat_id,
-                f"✅ *Detalles de la compra:*\n"
-                f"📦 Servicio: {service['nombre']}\n"
-                f"🔗 Enlace: `{text}`\n"
-                f"💵 Monto a transferir: *{service['precio_cup']} CUP*\n\n"
-                f"💳 Realiza el pago y *envía la foto/captura del comprobante aquí*."
-            )
+    if action == "approve":
+        res = send_jap_order(order["service"]["service_id"], order["link"], order["service"]["cantidad"])
+        if "order" in res:
+            jap_id = res["order"]
+            bot.edit_message_caption(caption=f"{call.message.caption}\n\n✅ Orden Aprobada\n🆔 ID JAP: `{jap_id}`", chat_id=chat_id, message_id=msg_id, parse_mode="Markdown")
+            bot.send_message(order["user_id"], f"🎉 ¡Tu pago ha sido aprobado! Tu orden de {order['service']['nombre']} está en camino.")
+            bot.answer_callback_query(call.id, "¡Orden enviada a JAP con éxito!")
         else:
-            tg_send_message(chat_id, "⚠️ El enlace debe comenzar con http:// o https://")
-        return
+            bot.send_message(ADMIN_CHAT_ID, f"⚠️ Error devuelto por JAP: {res.get('error', res)}")
+            bot.answer_callback_query(call.id, "Error en JAP")
 
-    if state == "waiting_receipt" and "photo" in msg:
-        photo = msg["photo"][-1]
-        photo_id = photo["file_id"]
-        s_key = user_states[chat_id]["service_key"]
-        service = SERVICIOS[s_key]
-        link = user_states[chat_id]["link"]
-
-        order_id = str(msg["message_id"])
-        pending_orders[order_id] = {
-            "user_id": chat_id,
-            "service": service,
-            "link": link
-        }
-
-        admin_keyboard = {
-            "inline_keyboard": [
-                [
-                    {"text": "✅ Aprobar y Enviar", "callback_data": f"approve_{order_id}"},
-                    {"text": "❌ Rechazar", "callback_data": f"reject_{order_id}"}
-                ]
-            ]
-        }
-
-        caption = (
-            f"🔔 *Nuevo comprobante recibido:*\n\n"
-            f"👤 Cliente: {user_name} (`{chat_id}`)\n"
-            f"📦 Servicio: {service['nombre']}\n"
-            f"💰 Monto: {service['precio_cup']} CUP\n"
-            f"🔗 Enlaces: {link}"
-        )
-
-        tg_send_photo(ADMIN_CHAT_ID, photo_id, caption, reply_markup=admin_keyboard)
-        tg_send_message(chat_id, "✅ *Comprobante recibido con éxito.* En breve será revisado.")
-        user_states.pop(chat_id, None)
-
-def main():
-    offset = None
-    while True:
-        try:
-            params = {"timeout": 30}
-            if offset:
-                params["offset"] = offset
-            res = requests.get(f"{TG_API_URL}/getUpdates", params=params, timeout=40).json()
-            if res.get("ok"):
-                for upd in res.get("result", []):
-                    offset = upd["update_id"] + 1
-                    handle_update(upd)
-        except Exception:
-            time.sleep(2)
+    elif action == "reject":
+        bot.edit_message_caption(caption=f"{call.message.caption}\n\n❌ Comprobante Rechazado", chat_id=chat_id, message_id=msg_id, parse_mode="Markdown")
+        bot.send_message(order["user_id"], "❌ Tu comprobante no pudo ser verificado. Contacta a soporte.")
+        bot.answer_callback_query(call.id, "Orden rechazada")
 
 if __name__ == "__main__":
-    main()
+    threading.Thread(target=run_flask).start()
+    bot.infinity_polling(skip_pending=True)
